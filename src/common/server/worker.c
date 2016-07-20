@@ -26,8 +26,12 @@
 #include "common/crypto/crypto.h"
 #include "common/packet/packet.h"
 #include "common/server/game_event.h"
-#include "common/session/session_manager.h"
 
+// Extend debug messages
+#define workerError(self, x, ...) error("[r%d:w%d] " x, self->info.routerId, self->info.workerId, ##__VA_ARGS__)
+#define workerWarning(self, x, ...) warning("[r%d:w%d] " x, self->info.routerId, self->info.workerId, ##__VA_ARGS__)
+#define workerInfo(self, x, ...)  info("[r%d:w%d] " x, self->info.routerId, self->info.workerId, ##__VA_ARGS__)
+#define workerSpecial(self, x, ...)  special("[r%d:w%d] " x, self->info.routerId, self->info.workerId, ##__VA_ARGS__)
 
 // ------ Structure declaration -------
 
@@ -36,10 +40,7 @@
  * @brief Handle a PING request from any entity.
  * @return a zframe_t containing the PONG. Never returns NULL.
  */
-static zframe_t *
-Worker_handlePingPacket (
-    void
-);
+static zframe_t *workerHandlePingPacket(void);
 
 /**
  * @brief Handle a client request.
@@ -48,11 +49,7 @@ Worker_handlePingPacket (
  * @param msg The message of the client
  * @return true on success, false otherwise
  */
-static bool
-Worker_processClientPacket (
-    Worker *self,
-    zmsg_t *msg
-);
+static bool workerProcessClientPacket(Worker *self, zmsg_t *msg);
 
 /**
  * @brief Handle a request from the public ports
@@ -61,12 +58,7 @@ Worker_processClientPacket (
  * @param self An allocated Worker structure
  * @return -2 on end of stream, -1 on error, 0 on success
 */
-static int
-Worker_handlePublicRequest (
-    zloop_t *loop,
-    zsock_t *worker,
-    void *_self
-);
+static int workerHandlePublicRequest(zloop_t *loop, zsock_t *worker, void *_self);
 
 /**
  * @brief Handle a request from the private ports (coming from global server)
@@ -75,12 +67,7 @@ Worker_handlePublicRequest (
  * @param self An allocated Worker structure
  * @return -2 on end of stream, -1 on error, 0 on success
 */
-static int
-Worker_handlePrivateRequest (
-    zloop_t *loop,
-    zsock_t *global,
-    void *_self
-);
+static int workerHandlePrivateRequest(zloop_t *loop, zsock_t *global, void *_self);
 
 /**
  * @brief Process a message from the the global server
@@ -88,18 +75,14 @@ Worker_handlePrivateRequest (
  * @param msg The message coming from the global server
  * @return true on success, false otherwise
 */
-static bool
-Worker_processGlobalPacket (
-    Worker *self,
-    zmsg_t *msg
-);
+static bool workerProcessGlobalPacket(Worker *self, zmsg_t *msg);
 
 /**
  * @brief Build a reply for a given packet
  * @return PacketHandlerState
  */
 static bool
-Worker_buildReply (
+workerBuildReply(
     Worker *self,
     uint8_t *sessionKey,
     uint8_t *packet,
@@ -121,7 +104,7 @@ Worker_buildReply (
  * @return PacketHandlerState
  */
 static PacketHandlerState
-Worker_handlePacket (
+workerHandlePacket (
     Worker *self,
     const PacketHandler *packetHandlers,
     size_t handlersCount,
@@ -131,7 +114,6 @@ Worker_handlePacket (
     bool isCrypted,
     zmsg_t *reply
 );
-
 
 /**
  * @brief Build a reply based on a single request
@@ -145,7 +127,7 @@ Worker_handlePacket (
  * @return true on success, false otherwise
  */
 static bool
-Worker_processOneRequest (
+workerProcessOneRequest (
     Worker *self,
     Session *session,
     uint8_t *packet,
@@ -164,20 +146,17 @@ Worker_processOneRequest (
  * @return -1 on error, 0 if the packet isn't crypted, 1 if the packet is crypted
  */
 static int
-Worker_getCryptedPacketInfo (
+workerGetCryptedPacketInfo (
     Worker *self,
     size_t packetSize,
     uint8_t *packet,
     CryptPacketHeader *cryptHeader
 );
 
-
 // ------ Extern function implementation -------
 
-Worker *
-workerNew (
-    WorkerInfo *info
-) {
+Worker *workerNew (WorkerInfo *info) {
+
     Worker *self;
 
     if ((self = calloc(1, sizeof(Worker))) == NULL) {
@@ -193,11 +172,8 @@ workerNew (
     return self;
 }
 
-bool
-workerInit (
-    Worker *self,
-    WorkerInfo *workerInfo
-) {
+bool workerInit (Worker *self, WorkerInfo *workerInfo) {
+
     // Make a private copy of the WorkerInfo
     if (!(workerInfoInit (
         &self->info, workerInfo->workerId, workerInfo->routerId, workerInfo->serverType,
@@ -244,8 +220,14 @@ workerInit (
         return false;
     }
 
-    if (!(self->sessionManager = zsock_new (ZMQ_REQ))) {
-        error("Cannot allocate session manager zsock.");
+    DbClientInfo dbClientInfo;
+    if (!(dbClientInfoInit(&dbClientInfo, "dbSession", self->info.routerId))) {
+        error("Cannot initialize dbClientInfo.");
+        return false;
+    }
+
+    if (!(self->dbSession = dbClientNew(&dbClientInfo))) {
+        error("Cannot allocate session db client.");
         return false;
     }
 
@@ -255,11 +237,10 @@ workerInit (
     return true;
 }
 
-bool
-workerInfoInit (
+bool workerInfoInit (
     WorkerInfo *self,
     uint16_t workerId,
-    uint16_t routerId,
+    RouterId_t routerId,
     ServerType serverType,
     char *globalServerIp,
     int globalServerPort,
@@ -300,147 +281,16 @@ workerInfoInit (
     return true;
 }
 
-static zframe_t *
-Worker_handlePingPacket (
-    void
-) {
-    return zframe_new (PACKET_HEADER (ROUTER_PONG), sizeof(ROUTER_PONG));
+static zframe_t *workerHandlePingPacket(void) {
+    return zframe_new(PACKET_HEADER (ROUTER_PONG), sizeof(ROUTER_PONG));
 }
 
-bool workerRequestSession(Worker *self, uint8_t *sessionKey) {
-    bool status = false;
-    zmsg_t *msg = NULL;
-
-    if (!(msg = zmsg_new ())) {
-        error ("Cannot allocate a new zmsg.");
-        goto cleanup;
-    }
-
-    if ((zmsg_addmem(msg, PACKET_HEADER(SESSION_MANAGER_LOAD_SESSION), sizeof(SESSION_MANAGER_LOAD_SESSION))) != 0) {
-        error("Cannot add header to the message.");
-        goto cleanup;
-    }
-
-    if ((zmsg_addmem(msg, sessionKey, SOCKET_SESSION_ID_SIZE)) != 0) {
-        error("Cannot add sessionKey to the message.");
-        goto cleanup;
-    }
-
-    if (zmsg_send(&msg, self->sessionManager) != 0) {
-        error("Cannot send session request to the session manager.");
-        goto cleanup;
-    }
-
-    status = true;
-
-cleanup:
-    zmsg_destroy(&msg);
-    return status;
-}
-
-bool workerStoreSession(Worker *self, Session *session) {
-    bool status = false;
-    zmsg_t *msg = NULL;
-    zframe_t *sessionManagerStatusFrame = NULL;
-
-    if (!(msg = zmsg_new ())) {
-        error ("Cannot allocate a new zmsg.");
-        goto cleanup;
-    }
-
-    if ((zmsg_addmem(msg, PACKET_HEADER(SESSION_MANAGER_STORE_SESSION), sizeof(SESSION_MANAGER_STORE_SESSION))) != 0) {
-        error("Cannot add header to the message.");
-        goto cleanup;
-    }
-
-    if ((zmsg_addmem(msg, session->socket.sessionKey, SOCKET_SESSION_ID_SIZE)) != 0) {
-        error("Cannot add sessionKey to the message.");
-        goto cleanup;
-    }
-
-    if ((zmsg_addmem(msg, session, sizeof(*session))) != 0) {
-        error("Cannot add the session to the message.");
-        goto cleanup;
-    }
-
-    if (zmsg_send(&msg, self->sessionManager) != 0) {
-        error("Cannot send session request to the session manager.");
-        goto cleanup;
-    }
-
-    if (!(msg = zmsg_recv(self->sessionManager))) {
-        error("Cannot receive answer of the session request from the session manager.");
-        goto cleanup;
-    }
-
-    if (!(sessionManagerStatusFrame = zmsg_first(msg))) {
-        error("Cannot get status frame.");
-        goto cleanup;
-    }
-    SessionManagerStatus sessionManagerStatus = *(SessionManagerStatus *) zframe_data(sessionManagerStatusFrame);
-
-    if (sessionManagerStatus != SESSION_MANAGER_STATUS_SUCCESS) {
-        error("Session manager returned an error : %d", sessionManagerStatus);
-        goto cleanup;
-    }
-
-    status = true;
-
-cleanup:
-    zmsg_destroy(&msg);
-    return status;
-}
-
-bool workerGetSession(Worker *self, uint8_t *sessionKey, Session *session) {
-    bool status = false;
-    zmsg_t *msg = NULL;
-    zframe_t *frame = NULL;
-
-    // Wait for the session manager to answer
-    if (!(msg = zmsg_recv(self->sessionManager))) {
-        error("Cannot retrieve the session");
-        goto cleanup;
-    }
-
-    // Get header frame
-    if (!(frame = zmsg_first(msg))) {
-        error("Cannot read frame header.");
-        goto cleanup;
-    }
-
-    // Check header
-    SessionManagerStatus sessionManagerStatus;
-    if ((sessionManagerStatus = *(SessionManagerStatus *) zframe_data(frame)) != SESSION_MANAGER_STATUS_SUCCESS) {
-        error("SessionManager sent an error : %d", sessionManagerStatus);
-        goto cleanup;
-    }
-
-    // Get session frame
-    if (!(frame = zmsg_next(msg))) {
-        error("Cannot read session frame.");
-        goto cleanup;
-    }
-
-    // Copy it
-    Session *sessionFromManager = (Session *) zframe_data(frame);
-    memcpy(session, sessionFromManager, sizeof(*session));
-    status = true;
-
-cleanup:
-    zmsg_destroy(&msg);
-    return status;
-}
-
-static bool
-Worker_processClientPacket (
-    Worker *self,
-    zmsg_t *msg
-) {
+static bool workerProcessClientPacket(Worker *self, zmsg_t *msg) {
     bool result = false;
     zframe_t *headerAnswer = NULL;
 
     // Read the message
-    zframe_t *sessionKeyFrame = zmsg_first (msg);
+    zframe_t *sessionKeyFrame = zmsg_first(msg);
     zframe_t *packetFrame = zmsg_next(msg);
     // We don't need the client packet in the reply
     zmsg_remove (msg, packetFrame);
@@ -451,21 +301,25 @@ Worker_processClientPacket (
     // Generate the socketId key
     socketSessionGenSessionKey (zframe_data(sessionKeyFrame), sessionKeyStr);
 
-    // Request the Session
-    if (!(workerRequestSession(self, sessionKeyStr))) {
+    // Request the Session for later use
+    if (!(dbClientRequestObject(self->dbSession, sessionKeyStr))) {
         error ("Cannot request a Session.");
         goto cleanup;
     }
 
     // Consider the message as a "normal" message by default
-    headerAnswer = zframe_new (PACKET_HEADER (ROUTER_WORKER_NORMAL), sizeof(ROUTER_WORKER_NORMAL));
-    zmsg_push (msg, headerAnswer);
+    if (zmsg_pushmem (msg, PACKET_HEADER (ROUTER_WORKER_NORMAL), sizeof(ROUTER_WORKER_NORMAL)) != 0) {
+        error("Cannot push frame to message.");
+        goto cleanup;
+    }
+
+    headerAnswer = zmsg_last(msg);
 
     // === Build the message reply ===
     uint8_t *packet = zframe_data(packetFrame);
-    size_t packetSize = zframe_size (packetFrame);
+    size_t packetSize = zframe_size(packetFrame);
 
-    if (!(Worker_buildReply (self, sessionKeyStr, packet, packetSize, msg, headerAnswer))) {
+    if (!(workerBuildReply(self, sessionKeyStr, packet, packetSize, msg, headerAnswer))) {
         error("Cannot build a reply for the following packet :");
         buffer_print(packet, packetSize, NULL);
         goto cleanup;
@@ -474,15 +328,56 @@ Worker_processClientPacket (
     result = true;
 
 cleanup:
-    // Cleanup
-    zframe_destroy (&packetFrame);
+    zframe_destroy(&packetFrame);
     return result;
 }
 
 static bool
-Worker_buildReply (
+workerGetOrCreateSessionObject(Worker *self, uint8_t *sessionKey, DbObject **_object) {
+
+    bool status = false;
+    DbObject *object = NULL;
+    Session *session = NULL;
+
+    if (!(dbClientGetObject(self->dbSession, &object))) {
+        // Not an error : It means the session hasn't been created yet (new client)
+        info("Cannot get the session object, create a new one.");
+    }
+
+    if (!object) {
+        // Session doesn't not exist yet, create it
+        info("Welcome, socket session %s!", sessionKey);
+        if (!(session = sessionNew(self->info.routerId, sessionKey))) {
+            error("Cannot allocate a new session.");
+            goto cleanup;
+        }
+
+        if (!(object = dbObjectNew(sizeof(*session), session, true))) {
+            error("Cannot allocate a new dbObject.");
+            goto cleanup;
+        }
+
+        if (!(dbClientUpdateObject(self->dbSession, sessionKey, object))) {
+            error("Cannot update the session object.");
+            goto cleanup;
+        }
+    }
+
+    status = true;
+    *_object = object;
+
+cleanup:
+    if (!status) {
+        sessionDestroy(&session);
+    }
+
+    return status;
+}
+
+static bool
+workerBuildReply(
     Worker *self,
-    uint8_t *sessionKeyStr,
+    uint8_t *sessionKey,
     uint8_t *packet,
     size_t packetSize,
     zmsg_t *msg,
@@ -496,16 +391,18 @@ Worker_buildReply (
     int isCrypted;
 
     // Get the session
-    Session session;
-    if (!(workerGetSession(self, sessionKeyStr, &session))) {
-        error("Cannot get the session.");
+    DbObject *sessionObject = NULL;
+    Session *session = NULL;
+    if (!(workerGetOrCreateSessionObject(self, sessionKey, &sessionObject))) {
+        error("Cannot get or create the session.");
         goto cleanup;
     }
+    session = sessionObject->data;
 
     while (packetSizeRemaining > 0)
     {
         // Get crypto packet info
-        if ((isCrypted = Worker_getCryptedPacketInfo (self, packetSizeRemaining, &packet[packetPos], &cryptHeader)) == -1) {
+        if ((isCrypted = workerGetCryptedPacketInfo(self, packetSizeRemaining, &packet[packetPos], &cryptHeader)) == -1) {
             error("Cannot get crypted packet info.");
             goto cleanup;
         }
@@ -517,7 +414,7 @@ Worker_buildReply (
         }
 
         // Process the request
-        if ((!(Worker_processOneRequest (self, &session, &packet[packetPos], subPacketSize, msg, headerAnswer, isCrypted)))) {
+        if ((!(workerProcessOneRequest(self, session, &packet[packetPos], subPacketSize, msg, headerAnswer, isCrypted)))) {
             error("Cannot process properly a reply.");
             goto cleanup;
         }
@@ -530,11 +427,12 @@ Worker_buildReply (
     status = true;
 
 cleanup:
+    // dbObjectDestroy(&sessionObject);
     return status;
 }
 
 static bool
-Worker_processOneRequest (
+workerProcessOneRequest(
     Worker *self,
     Session *session,
     uint8_t *packet,
@@ -547,35 +445,53 @@ Worker_processOneRequest (
 
     // Decrypt the packet
     if (isCrypted) {
-        if (!(cryptoDecryptPacket (&packet, &packetSize))) {
+        if (!(cryptoDecryptPacket(&packet, &packetSize))) {
             error("Cannot decrypt the client packet.");
             goto cleanup;
         }
     }
 
+    Session sessionCopy;
+    memcpy(&sessionCopy, session, sizeof(sessionCopy));
+
     // Answer
-    switch (Worker_handlePacket (self, self->info.packetHandlers, self->info.packetHandlersCount, session, packet, packetSize, isCrypted, msg))
+    switch (workerHandlePacket(
+        self,
+        self->info.packetHandlers,
+        self->info.packetHandlersCount,
+        session,
+        packet, packetSize,
+        isCrypted, msg))
     {
         case PACKET_HANDLER_ERROR:
-            zframe_reset (headerAnswer, PACKET_HEADER (ROUTER_WORKER_ERROR), sizeof(ROUTER_WORKER_ERROR));
+            zframe_reset(headerAnswer, PACKET_HEADER(ROUTER_WORKER_ERROR), sizeof(ROUTER_WORKER_ERROR));
+            if (memcmp(&sessionCopy, session, sizeof(sessionCopy)) != 0) {
+                error("The session was modified but the worker returned an error status. "
+                      "Please change the source code so the session isn't modified before returning an error status.");
+            }
             goto cleanup;
         break;
 
         case PACKET_HANDLER_OK:
         break;
 
-        case PACKET_HANDLER_UPDATE_SESSION:
+        case PACKET_HANDLER_UPDATE_SESSION: {
+            DbObject object;
+            if (!(dbObjectInit(&object, sizeof(*session), session, true))) {
+                error("Cannot initialize dbObject.");
+                goto cleanup;
+            }
 
-            if (!(workerStoreSession(self, session))) {
+            if (!(dbClientUpdateObject(self->dbSession, session->socket.sessionKey, &object))) {
                 error("Cannot update the memory session.");
                 goto cleanup;
             }
 
-            if (!(redisUpdateSession (self->redis, session))) {
+            if (!(redisUpdateSession(self->redis, session))) {
                 error("Cannot update the Redis session.");
                 goto cleanup;
             }
-        break;
+        }   break;
 
         case PACKET_HANDLER_DELETE_SESSION: {
             RedisSessionKey sessionKey = {
@@ -584,7 +500,7 @@ Worker_processOneRequest (
                     .sessionKey = session->socket.sessionKey
                 }
             };
-            if (!(redisFlushSession (self->redis, &sessionKey))) {
+            if (!(redisFlushSession(self->redis, &sessionKey))) {
                 error("Cannot delete the Session.");
                 goto cleanup;
             }
@@ -595,13 +511,11 @@ Worker_processOneRequest (
     status = true;
 
 cleanup:
-
     return status;
 }
 
-
 static PacketHandlerState
-Worker_handlePacket (
+workerHandlePacket(
     Worker *self,
     const PacketHandler *packetHandlers,
     size_t handlersCount,
@@ -612,39 +526,36 @@ Worker_handlePacket (
     zmsg_t *reply
 ) {
     PacketHandlerFunction handler;
+    PacketHandlerState status = PACKET_HANDLER_ERROR;
 
     // Read the packet
     ClientPacketHeader header;
-    clientPacketUnwrapHeader (&packet, &packetSize, &header, isCrypted);
+    clientPacketUnwrapHeader(&packet, &packetSize, &header, isCrypted);
 
     // Get the corresponding packet handler
     if (header.type > handlersCount) {
         error("Invalid packet type (%#x / %#x). Ignore request.", header.type, handlersCount);
-        return PACKET_HANDLER_ERROR;
+        goto cleanup;
     }
 
     // Test if a handler is associated with the packet type requested.
     if (!(handler = packetHandlers [header.type].handler)) {
         error("Cannot find handler for the requested packet type : %s",
             (header.type < PACKET_TYPES_MAX_INDEX) ?
-               packetTypeInfo.packets[header.type].string : "UNKNOWN"
+               packetTypeInfo.packets[header.type].name : "UNKNOWN"
         );
-        return PACKET_HANDLER_ERROR;
+        goto cleanup;
     }
 
     // Call the handler
-    special("Calling [%s] handler", packetTypeInfo.packets[header.type].string);
-    return handler (self, session, packet, packetSize, reply);
+    special("Calling [%s] handler", packetTypeInfo.packets[header.type].name);
+    status = handler(self, session, packet, packetSize, reply);
+
+cleanup:
+    return status;
 }
 
-
-static int
-Worker_getCryptedPacketInfo (
-    Worker *self,
-    size_t packetSize,
-    uint8_t *packet,
-    CryptPacketHeader *cryptHeader
-) {
+static int workerGetCryptedPacketInfo(Worker *self, size_t packetSize, uint8_t *packet, CryptPacketHeader *cryptHeader) {
     memset(cryptHeader, 0, sizeof(CryptPacketHeader));
 
     switch (self->info.serverType)
@@ -659,7 +570,7 @@ Worker_getCryptedPacketInfo (
             }
 
             // Unwrap the crypt packet header, and check the cryptHeader size
-            cryptPacketGetHeader (packet, cryptHeader);
+            cryptPacketGetHeader(packet, cryptHeader);
             if ((packetSize - sizeof(CryptPacketHeader)) < cryptHeader->plainSize) {
                 error("The real packet plainSize (0x%x) is inferior to the header plainSize (0x%x). Ignore request.",
                     packetSize - sizeof(CryptPacketHeader), cryptHeader->plainSize);
@@ -684,89 +595,92 @@ Worker_getCryptedPacketInfo (
     return -1;
 }
 
+bool workerStart(Worker *self) {
 
-bool
-workerStart (
-    Worker *self
-) {
+    bool status = false;
 
     // ============================
     //    Initialize connections
     // ============================
+    char *endpoint = NULL;
+
+    if (!(endpoint = zsys_sprintf(EVENT_SERVER_SUBSCRIBER_ENDPOINT, self->info.routerId, self->info.workerId))) {
+        workerError(self, "Cannot create endpoint string.");
+        goto cleanup;
+    }
 
     // Create and bind a publisher to send messages to the Event Server
-    if (zsock_bind(self->eventServer,
-                   EVENT_SERVER_SUBSCRIBER_ENDPOINT, self->info.routerId, self->info.workerId) != 0) {
-        error("[routerId=%d][WorkerId=%d] cannot bind to the subscriber endpoint.",
-              self->info.routerId, self->info.workerId);
-        return false;
+    if (zsock_bind(self->eventServer, endpoint) != 0) {
+        workerError(self, "Cannot bind to the subscriber endpoint '%s'.", endpoint);
+        goto cleanup;
     }
 
-    if (zsock_connect(self->sessionManager, SESSION_MANAGER_ENDPOINT, self->info.routerId) != 0) {
-        error("[routerId=%d][WorkerId=%d] Cannot connect to session manager.",
-              self->info.routerId, self->info.workerId);
-        return false;
+    if (!(dbClientStart(self->dbSession))) {
+        workerError(self, "Cannot connect to session manager.");
+        goto cleanup;
     }
 
-    if (zthread_new (workerMainLoop, self) != 0) {
-        error("Cannot create Server worker ID = %d.", self->info.workerId);
-        return false;
+    if (zthread_new(workerMainLoop, self) != 0) {
+        workerError(self, "Cannot create new thread.");
+        goto cleanup;
     }
 
-    return true;
+    status = true;
+
+cleanup:
+    zstr_free(&endpoint);
+    return status;
 }
 
-
-void *
-workerMainLoop (
-    void *arg
-) {
+void *workerMainLoop(void *arg) {
     zsock_t *worker = NULL, *global = NULL;
     zloop_t *reactor;
-
 
     Worker *self = (Worker *) arg;
 
     // Create and connect a socket to the backend
-    if (!(worker = zsock_new (ZMQ_REQ))
-    ||  zsock_connect (worker, ROUTER_BACKEND_ENDPOINT, self->info.routerId) == -1
+    if (!(worker = zsock_new(ZMQ_REQ))
+    ||  zsock_connect(worker, ROUTER_BACKEND_ENDPOINT, self->info.routerId) == -1
     ) {
-        error("[routerId=%d][WorkerId=%d] cannot connect to the backend socket.", self->info.routerId, self->info.workerId);
+        workerError(self, "Cannot connect to the backend socket.");
         goto cleanup;
     }
 
     // Create and connect a socket to the global server
-    if (!(global = zsock_new (ZMQ_REQ))
-    ||  zsock_connect (global, ROUTER_GLOBAL_ENDPOINT, self->info.globalServerIp, self->info.globalServerPort) == -1
+    if (!(global = zsock_new(ZMQ_REQ))
+    ||  zsock_connect(global, ROUTER_GLOBAL_ENDPOINT, self->info.globalServerIp, self->info.globalServerPort) == -1
     ) {
-        error("[routerId=%d][WorkerId=%d] cannot bind to the global server %s:%d.",
-              self->info.routerId, self->info.workerId, self->info.globalServerIp, self->info.globalServerPort);
+        workerError(self, "Cannot bind to the global server %s:%d.",
+            self->info.globalServerIp, self->info.globalServerPort);
         goto cleanup;
     }
 
 
     // Tell to the broker we're ready for work
-    zmsg_t *readyMsg = zmsg_new ();
-    if (zmsg_addmem (readyMsg, PACKET_HEADER (ROUTER_WORKER_READY), sizeof(ROUTER_WORKER_READY)) == -1
-    ||  zmsg_addmem (readyMsg, PACKET_HEADER (self->info.workerId), sizeof(self->info.workerId)) == -1
-    ||  zmsg_send (&readyMsg, worker) == -1
+    zmsg_t *readyMsg = zmsg_new();
+    if (zmsg_addmem(readyMsg, PACKET_HEADER(ROUTER_WORKER_READY), sizeof(ROUTER_WORKER_READY)) == -1
+    ||  zmsg_addmem(readyMsg, PACKET_HEADER(self->info.workerId), sizeof(self->info.workerId)) == -1
+    ||  zmsg_send(&readyMsg, worker) == -1
     ) {
-        error("[routerId=%d][WorkerId=%d] cannot send a correct ROUTER_WORKER_READY state.",
-               self->info.routerId, self->info.workerId);
+        workerError(self, "Cannot send a correct ROUTER_WORKER_READY state.");
         goto cleanup;
     }
 
     if (!(reactor = zloop_new())) {
-        error("Cannot allocate a new reactor.");
+        workerError(self, "Cannot allocate a new reactor.");
+        goto cleanup;
     }
 
-    if (zloop_reader(reactor, worker,  Worker_handlePublicRequest,  self) == -1
-    ||  zloop_reader(reactor, global, Worker_handlePrivateRequest, self) == -1
+    if (zloop_reader(reactor, worker,  workerHandlePublicRequest,  self) == -1
+    ||  zloop_reader(reactor, global, workerHandlePrivateRequest, self) == -1
     ) {
-        error("Cannot register the sockets with the reactor.");
+        workerError(self, "Cannot register the sockets with the reactor.");
+        goto cleanup;
     }
-    if (zloop_start (reactor) != 0) {
-        error("An error occurred in the reactor.");
+
+    if (zloop_start(reactor) != 0) {
+        workerError(self, "An error occurred in the reactor.");
+        goto cleanup;
     }
 
 cleanup:
@@ -775,36 +689,31 @@ cleanup:
     zsock_destroy (&worker);
     zsock_destroy (&global);
 
-    dbg("[routerId=%d][WorkerId=%d] exits.", self->info.routerId, self->info.workerId);
+    workerInfo(self, "stopped running.");
     return NULL;
 }
 
-static int
-Worker_handlePrivateRequest (
-    zloop_t *loop,
-    zsock_t *global,
-    void *_self
-) {
+static int workerHandlePrivateRequest (zloop_t *loop, zsock_t *global, void *_self) {
     int result = 0;
     zmsg_t *msg = NULL;
     Worker *self = (Worker *) _self;
 
     // Process messages as they arrive
     if (!(msg = zmsg_recv(global))) {
-        error("[routerId=%d][WorkerId=%d] stops working.", self->info.routerId, self->info.workerId);
+        workerError(self, "Stops working.");
         result = -1;
         goto cleanup;
     }
 
-    if (!(Worker_processGlobalPacket (self, msg))) {
-        error("[routerId=%d][WorkerId=%d] Worker cannot process the global packet.", self->info.routerId, self->info.workerId);
+    if (!(workerProcessGlobalPacket (self, msg))) {
+        workerError(self, "Cannot process the global packet.");
         result = -1;
         goto cleanup;
     }
 
     // Reply back to the sender
-    if (zmsg_send (&msg, global) != 0) {
-        warning("[routerId=%d][WorkerId=%d] failed to send a message to the backend.", self->info.routerId, self->info.workerId);
+    if (zmsg_send(&msg, global) != 0) {
+        workerWarning(self, "Failed to send a message to the backend.");
         result = -1;
         goto cleanup;
     }
@@ -814,11 +723,8 @@ cleanup:
     return result;
 }
 
-static bool
-Worker_processGlobalPacket (
-    Worker *self,
-    zmsg_t *msg
-) {
+static bool workerProcessGlobalPacket(Worker *self, zmsg_t *msg) {
+
     bool result = true;
 
     // Extract the request
@@ -830,11 +736,11 @@ Worker_processGlobalPacket (
     // Handle the request
     switch (header) {
         case ROUTER_PING:
-            requestAnswer = Worker_handlePingPacket ();
+            requestAnswer = workerHandlePingPacket();
         break;
 
         default:
-            error("[routerId=%d][WorkerId=%d] : Packet type %d not handled.", self->info.routerId, self->info.workerId, header);
+            workerError(self, "Packet type %d not handled.");
             result = false;
             goto cleanup;
         break;
@@ -845,24 +751,18 @@ Worker_processGlobalPacket (
 
 cleanup:
     // Clean up
-    zframe_destroy (&headerFrame);
+    zframe_destroy(&headerFrame);
     return result;
 }
 
-static int
-Worker_handlePublicRequest (
-    zloop_t *loop,
-    zsock_t *worker,
-    void *_self
-) {
-
+static int workerHandlePublicRequest(zloop_t *loop, zsock_t *worker, void *_self) {
     int result = 0;
     zmsg_t *msg = NULL;
     Worker *self = (Worker *) _self;
 
     // Process messages as they arrive
     if (!(msg = zmsg_recv(worker))) {
-        dbg("[routerId=%d][WorkerId=%d] stops working.", self->info.routerId, self->info.workerId);
+        workerError(self, "Stops working.");
         result = -1;
         goto cleanup;
     }
@@ -870,63 +770,52 @@ Worker_handlePublicRequest (
     // No message should be with less than 3 frames
     // The first frame is the client identity
     // The second frame is the data of the packet
-    if (zmsg_size (msg) != 2) {
-        error("[routerId=%d][WorkerId=%d] received a malformed message.", self->info.routerId, self->info.workerId);
+    if (zmsg_size(msg) != 2) {
+        workerError(self, "Received a malformed message.");
         result = -1;
         goto cleanup;
     }
 
-    if (!(Worker_processClientPacket (self, msg))) {
-        error("Cannot handle correctly the client packet.");
-        result = -1;
+    if (!(workerProcessClientPacket(self, msg))) {
+        workerError(self, "Cannot handle correctly the client packet.");
+        result = 0;
         // Don't return, we want to send back an answer so the Worker doesn't quit
     }
 
     // Reply back to the sender
-    if (zmsg_send (&msg, worker) != 0) {
-        warning("[routerId=%d][WorkerId=%d] failed to send a message to the backend.",
-                self->info.routerId, self->info.workerId);
+    if (zmsg_send(&msg, worker) != 0) {
+        workerWarning(self, "Failed to send a message to the backend.");
         result = -1;
         goto cleanup;
     }
 
 cleanup:
     zmsg_destroy(&msg);
+
     return result;
 }
 
-
-
 bool workerDispatchEvent (Worker *self, uint8_t *emitterSk, EventType eventType, void *event, size_t eventSize)
 {
-    return eventServerDispatchEvent (self->eventServer, emitterSk, eventType, event, eventSize);
+    return eventServerDispatchEvent(self->eventServer, emitterSk, eventType, event, eventSize);
 }
 
-void
-WorkerInfo_free(
-    WorkerInfo *self
-) {
-    mySqlInfoFree (&self->sqlInfo);
-    redisInfoFree (&self->redisInfo);
+void workerInfoFree(WorkerInfo *self) {
+    mySqlInfoFree(&self->sqlInfo);
+    redisInfoFree(&self->redisInfo);
     free(self->globalServerIp);
 }
 
-void
-workerFree (
-    Worker *self
-) {
-    redisDestroy (&self->redis);
-    mySqlDestroy (&self->sqlConn);
+void workerFree(Worker *self) {
+    redisDestroy(&self->redis);
+    mySqlDestroy(&self->sqlConn);
 }
 
-void
-workerDestroy (
-    Worker **_self
-) {
+void workerDestroy(Worker **_self) {
     Worker *self = *_self;
 
     if (self) {
-        workerFree (self);
+        workerFree(self);
         free(self);
     }
 

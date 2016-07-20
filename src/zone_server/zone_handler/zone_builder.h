@@ -21,9 +21,10 @@
 
 #include "R1EMU.h"
 #include "common/commander/commander.h"
-#include "common/server/worker.h"
 #include "common/commander/inventory.h"
-#include "common/item/item.h"
+#include "common/actor/item/item.h"
+#include "common/actor/skill/skill.h"
+#include "common/actor/npc/npc.h"
 
 typedef enum PacketTypeZoneNormal {
     ZC_NORMAL_UNKNOWN_1 = 0x11,
@@ -37,7 +38,7 @@ typedef enum PacketTypeZoneNormal {
  * @brief Sit a target PC
  * @param targetPcId The PC ID of the target entity who sit
  */
-void zoneBuilderRestSit(uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderRestSit(PcId_t targetPcId, zmsg_t *replyMsg);
 
 /**
  * @brief Inform that a skill is ready
@@ -47,8 +48,8 @@ void zoneBuilderRestSit(uint32_t targetPcId, zmsg_t *replyMsg);
  * @param pos2
  */
 void zoneBuilderSkillReady(
-    uint32_t targetPcId,
-    uint32_t skillId,
+    PcId_t targetPcId,
+    SkillId_t skillId,
     PositionXYZ *pos1,
     PositionXYZ *pos2,
     zmsg_t *replyMsg);
@@ -62,8 +63,8 @@ void zoneBuilderPlayAni(zmsg_t *replyMsg);
  * @brief Cast a given skill at a given position from a given PC ID
  */
 void zoneBuilderSkillCast(
-    uint32_t targetPcId,
-    uint32_t skillId,
+    PcId_t targetPcId,
+    SkillId_t skillId,
     PositionXYZ *position1,
     PositionXYZ *position2,
     zmsg_t *replyMsg);
@@ -72,19 +73,39 @@ void zoneBuilderSkillCast(
  * @brief Play the cast animation of a given skill at a given position from a given PC ID
  */
 void zoneBuilderPlaySkillCastAni(
-    uint32_t targetPcId,
+    PcId_t targetPcId,
     PositionXYZ *position,
     zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
  */
-void zoneBuilderNormalUnk8(uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderNormalUnk8(PcId_t targetPcId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
  */
-void zoneBuilderNormalUnk9( uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderNormalUnk9( PcId_t targetPcId, zmsg_t *replyMsg);
+
+/**
+ * @brief @unknown
+ */
+void zoneBuilderNormalUnk10_56(PcId_t targetPcId, SkillId_t skillId, PositionXYZ *position, PositionXZ *direction, bool enableSkill, zmsg_t *replyMsg);
+
+/**
+ * @brief @unknown
+ */
+void zoneBuilderNormalUnk11_1c(PcId_t targetPcId, PositionXYZ *position, PositionXZ *direction, zmsg_t *replyMsg);
+
+/**
+ * @brief @unknown
+ */
+void zoneBuilderNormalUnk12_60(ActorId_t actorId, zmsg_t *replyMsg);
+
+/**
+ * @brief @unknown
+ */
+void zoneBuilderNormalUnk13_85(ActorId_t actorId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
@@ -110,8 +131,8 @@ void zoneBuilderNormalUnk6(char *commanderName, zmsg_t *replyMsg);
  * @brief @unknown
  */
 void zoneBuilderNormalUnk7(
-    uint64_t accountId,
-    uint32_t targetPcId,
+    AccountId_t accountId,
+    PcId_t targetPcId,
     char *familyName,
     char *commanderName,
     zmsg_t *replyMsg);
@@ -129,22 +150,22 @@ void zoneBuilderEnterMonster(zmsg_t *replyMsg);
 /**
  * @brief @unknown
  */
-void zoneBuilderBuffList(uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderBuffList(PcId_t targetPcId, zmsg_t *replyMsg);
 
 /**
  * @brief Makes a playable character appear in the screen.
  */
-void zoneBuilderEnterPc(CommanderInfo *commander, zmsg_t *replyMsg);
+void zoneBuilderEnterPc(Commander *commander, zmsg_t *replyMsg);
 
 /**
  * @brief Makes a playable character disappear in the screen.
  */
-void zoneBuilderLeave(uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderLeave(PcId_t targetPcId, zmsg_t *replyMsg);
 
 /**
- * @brief @unknown
+ * @brief Add a skill in the commander skill list.
  */
-void zoneBuilderSkillAdd(zmsg_t *replyMsg);
+void zoneBuilderSkillAdd(SkillId_t skillId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
@@ -155,7 +176,7 @@ void zoneBuilderLoginTime(zmsg_t *replyMsg);
  * @brief Sets the stamina to value of stamina. Note: Stamina in game is
  *        divided. 25 stamina ingame means stamina=25000.
  */
-void zoneBuilderStamina(uint32_t stamina, zmsg_t *replyMsg);
+void zoneBuilderStamina(Stamina_t stamina, zmsg_t *replyMsg);
 
 /**
  * @brief Sets the stamina to value of stamina. Note: Stamina in game is
@@ -163,34 +184,37 @@ void zoneBuilderStamina(uint32_t stamina, zmsg_t *replyMsg);
  *        this one will not change the stamina in the client. In captures
  *        it is sent exactly at the same time with same data as ZC_STAMINA.
  */
-void zoneBuilderAddStamina(uint32_t stamina, zmsg_t *replyMsg);
+void zoneBuilderAddStamina(Stamina_t stamina, zmsg_t *replyMsg);
 
 /**
  * @brief Updates sp of character to value of sp.
  */
-void zoneBuilderUpdateSP(uint32_t targetPcID, uint32_t sp, zmsg_t *replyMsg);
+void zoneBuilderUpdateSP(PcId_t targetPcId, Sp_t sp, zmsg_t *replyMsg);
 
 /**
  * @brief Updates sp of character to value of sp.
  */
-void zoneBuilderPCLevelUp(uint32_t targetPcID, uint32_t level, zmsg_t *replyMsg);
+void zoneBuilderPCLevelUp(PcId_t targetPcId, CommanderLevel_t level, zmsg_t *replyMsg);
 
 /**
  * @brief Updates hp/maxhp/sp/maxsp of character.
  */
-void zoneBuilderUpdateAllStatus(uint32_t targetPcID, uint32_t hp, uint32_t maxHp, uint16_t sp,
-                                uint16_t maxSp, zmsg_t *replyMsg);
+void zoneBuilderUpdateAllStatus(
+    PcId_t targetPcId,
+    Hp_t currentHp, Hp_t maxHp,
+    Sp_t currentSp, Sp_t maxSp,
+    zmsg_t *replyMsg);
 
 /**
  * @brief Updates hp of character. Does not seem to show in client. This packet seems to be
  *        sent during HP regen and when the client starts the game.
  */
-void zoneBuilderAddHp(uint32_t targetPcID, uint32_t hp, uint32_t maxHp, zmsg_t *replyMsg);
+void zoneBuilderAddHp(PcId_t targetPcId, uint32_t hp, uint32_t maxHp, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
  */
-void zoneBuilderObjectProperty(zmsg_t *replyMsg);
+void zoneBuilderObjectProperty(ActorId_t actorId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
@@ -210,7 +234,7 @@ void zoneBuilderNormalUnk5(zmsg_t *replyMsg);
 /**
  * @brief @unknown
  */
-void zoneBuilderNormalUnk4(uint64_t socialInfoId, zmsg_t *replyMsg);
+void zoneBuilderNormalUnk4(SocialInfoId_t socialInfoId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
@@ -235,7 +259,7 @@ void zoneBuilderQuickSlotList(zmsg_t *replyMsg);
 /**
  * @brief @unknown
  */
-void zoneBuilderItemEquipList(zmsg_t *replyMsg);
+void zoneBuilderItemEquipList(Inventory *inventory, zmsg_t *replyMsg);
 
 /**
  * @brief Send information about Jobs
@@ -245,12 +269,12 @@ void zoneBuilderStartInfo(zmsg_t *replyMsg);
 /**
  * @brief @unknown
  */
-void zoneBuilderAbilityList(uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderAbilityList(PcId_t targetPcId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
  */
-void zoneBuilderSkillList(uint32_t targetPcId, zmsg_t *replyMsg);
+void zoneBuilderSkillList(PcId_t targetPcId, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown
@@ -300,32 +324,31 @@ void zoneBuilderSkillmapList(zmsg_t *replyMsg);
 /**
  * @brief Send information about item inventory list
  */
-void zoneBuilderItemInventoryList(zmsg_t *replyMsg);
+void zoneBuilderItemInventoryList(Inventory *inventory, zmsg_t *replyMsg);
 
 /**
  * @brief Send a target commander movement speed
  */
-void zoneBuilderMoveSpeed(uint32_t targetPcId, float movementSpeed,zmsg_t *replyMsg);
+void zoneBuilderMoveSpeed(PcId_t targetPcId, float movementSpeed,zmsg_t *replyMsg);
 
 /**
  * @brief Connect to the zone server
  */
 void zoneBuilderConnectOk(
-    uint32_t pcId,
     uint8_t gameMode,
     uint8_t accountPrivileges,
-    CommanderInfo *commander,
+    Commander *commander,
     zmsg_t *replyMsg);
 
 /**
  * Makes a target PC jump at a given height
  */
-void zoneBuilderJump(uint32_t targetPcId, float height, zmsg_t *replyMsg);
+void zoneBuilderJump(PcId_t targetPcId, float height, zmsg_t *replyMsg);
 
 /**
  * Makes a normal chat message
  */
-void zoneBuilderChat(CommanderInfo *commander, uint8_t *chatText, zmsg_t *replyMsg);
+void zoneBuilderChat(Commander *commander, uint8_t *chatText, zmsg_t *replyMsg);
 
 /**
  * @brief @unknown Contains information about quest position?
@@ -340,18 +363,18 @@ void zoneBuilderOptionList(zmsg_t *replyMsg);
 /**
  * @brief @unknown
  */
-void zoneBuilderCooldownList(uint64_t socialInfoId, zmsg_t *replyMsg);
+void zoneBuilderCooldownList(SocialInfoId_t socialInfoId, zmsg_t *replyMsg);
 
 /**
  * @brief Set the position of a commander
  */
-void zoneBuilderSetPos(uint32_t targetPcId, PositionXYZ *position, zmsg_t *replyMsg);
+void zoneBuilderSetPos(PcId_t targetPcId, PositionXYZ *position, zmsg_t *replyMsg);
 
 /**
  * @brief Move a given commander to a given position
  */
 void zoneBuilderMoveDir(
-    uint32_t targetPcId,
+    PcId_t targetPcId,
     PositionXYZ *position,
     PositionXZ *direction,
     float timestamp,
@@ -371,7 +394,7 @@ void zoneBuilderStartGame(
  * @brief Request a PC to stop moving
  */
 void zoneBuilderPcMoveStop(
-    uint32_t targetPcId,
+    PcId_t targetPcId,
     PositionXYZ *position,
     PositionXZ *direction,
     float timestamp,
@@ -380,17 +403,17 @@ void zoneBuilderPcMoveStop(
 /**
  * @brief Add an item in the current commander inventory
  */
-void zoneBuilderItemAdd(ItemPkt *item, InventoryAddType addType, zmsg_t *replyMsg);
+void zoneBuilderItemAdd(Item *item, ItemInventoryIndex_t inventoryIndex, InventoryAddType addType, zmsg_t *replyMsg);
 
 /**
  * @brief Rotate head
  */
-void zoneBuilderRotateHead(uint32_t pcId, PositionXZ *pos, zmsg_t *replyMsg);
+void zoneBuilderRotateHead(PcId_t pcId, PositionXZ *pos, zmsg_t *replyMsg);
 
 /**
  * @brief Rotate body
  */
-void zoneBuilderRotate(uint32_t pcId, PositionXZ *pos, zmsg_t *replyMsg);
+void zoneBuilderRotate(PcId_t pcId, PositionXZ *pos, zmsg_t *replyMsg);
 
 /**
  * @brief Logout
@@ -405,4 +428,21 @@ void zoneBuilderChangeCamera(uint8_t mode, PositionXYZ *pos, float fspd, float i
 /**
  * Makes an animation
  */
-void zoneBuilderPose(uint32_t pcId, uint32_t poseId, PositionXYZ *pos, PositionXZ *dir, zmsg_t *replyMsg);
+void zoneBuilderPose(PcId_t pcId, CommanderPose_t poseId, PositionXYZ *pos, PositionXZ *dir, zmsg_t *replyMsg);
+
+/**
+ * Remove an item from a commander
+ */
+void zoneBuilderItemRemove(Item *item, InventoryRemoval removalType, InventoryType inventoryType, zmsg_t *replyMsg);
+
+/**
+ * Set commander's Job Points
+ */
+void zoneBuilderJobPoints(CommanderJobId_t jobId, CommanderJobPoints_t points, zmsg_t *replyMsg);
+
+void zoneBuilderSkillRangeFan(PcId_t pcId, PositionXYZ *position, PositionXZ *direction, zmsg_t *replyMsg);
+void zoneBuilderSkillRangeSquare(PcId_t pcId, SkillId_t skillId, PositionXYZ *pos1, PositionXYZ *pos2, zmsg_t *replyMsg);
+void zoneBuilderSkillMeleeGround(PcId_t pcId, SkillId_t skillId, PositionXYZ *position, PositionXZ *direction, zmsg_t *replyMsg);
+void zoneBuilderBuffAdd(PcId_t pcId, Commander *commander, zmsg_t *replyMsg);
+void zoneBuilderHealInfo(PcId_t pcId, uint32_t amountHealed, uint32_t totalHP, zmsg_t *replyMsg);
+void zoneBuilderNormalUnk14_4c(PcId_t pcId, SkillId_t skillId, zmsg_t *replyMsg);

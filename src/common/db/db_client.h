@@ -24,19 +24,24 @@
 
 // ---------- Defines -------------
 
+// extend debug messages
+#define dbClientError(self, x, ...) error("[%s:%d] " x, self->info.name, self->info.routerId, ##__VA_ARGS__)
+#define dbClientInfo(self, x, ...)  info("[%s:%d] " x, self->info.name, self->info.routerId, ##__VA_ARGS__)
+#define dbClientSpecial(self, x, ...) special("[%s:%d] " x, self->info.name, self->info.routerId, ##__VA_ARGS__)
+
 // ------ Structure declaration -------
 typedef struct DbClient DbClient;
 
 typedef struct DbClientInfo {
     char *name;
-    uint16_t routerId;
+    RouterId_t routerId;
 }   DbClientInfo;
 
 // ----------- Functions ------------
 
 /**
  * Allocate a new DbClient structure.
- * @return A pointer to an allocated DbClient, or NULL if an error occured.
+ * @return A pointer to an allocated DbClient, or NULL if an error occurred.
  */
 DbClient *dbClientNew(DbClientInfo *startInfo);
 
@@ -49,16 +54,16 @@ bool dbClientInit(DbClient *self, DbClientInfo *startInfo);
 
 /**
  * Allocate a new DbClientInfo structure.
- * @return A pointer to an allocated DbClientInfo, or NULL if an error occured.
+ * @return A pointer to an allocated DbClientInfo, or NULL if an error occurred.
  */
-DbClientInfo *dbClientInfoNew(char *name, uint16_t routerId);
+DbClientInfo *dbClientInfoNew(char *name, RouterId_t routerId);
 
 /**
  * Initialize an allocated DbClientInfo structure.
  * @param self An allocated DbClientInfo to initialize.
  * @return true on success, false otherwise.
  */
-bool dbClientInfoInit(DbClientInfo *self, char *name, uint16_t routerId);
+bool dbClientInfoInit(DbClientInfo *self, char *name, RouterId_t routerId);
 
 /**
  * Request value from database by key
@@ -67,8 +72,8 @@ bool dbClientInfoInit(DbClientInfo *self, char *name, uint16_t routerId);
  * @param keysCount number of keys
  * @return true on success, false otherwise.
  */
-bool dbClientRequestValue(DbClient *self, char *key);
-bool dbClientRequestValues(DbClient *self, char **keys, size_t keysCount);
+bool dbClientRequestObject(DbClient *self, char *key);
+bool dbClientRequestObjects(DbClient *self, char **keys, size_t keysCount);
 
 /**
  * Get value from Db previously requested
@@ -77,8 +82,8 @@ bool dbClientRequestValues(DbClient *self, char **keys, size_t keysCount);
               Contains the hashtable of <key, DbObject *> if the function success
  * @return true on success, false otherwise.
  */
-bool dbClientGetValues(DbClient *self, zhash_t **_out);
-bool dbClientGetValue(DbClient *self, DbObject **out);
+bool dbClientGetObjects(DbClient *self, zhash_t **_out);
+bool dbClientGetObject(DbClient *self, DbObject **out);
 
 /**
  * Remove a value from Db
@@ -87,8 +92,8 @@ bool dbClientGetValue(DbClient *self, DbObject **out);
  * @param keysCount number of keys
  * @return true on success, false otherwise.
  */
-bool dbClientRemoveValues(DbClient *self, char **keys, size_t keysCount);
-bool dbClientRemoveValue(DbClient *self, char *key);
+bool dbClientRemoveObjects(DbClient *self, char **keys, size_t keysCount);
+bool dbClientRemoveObject(DbClient *self, char *key);
 
 /**
  * Update a value from Db
@@ -96,8 +101,16 @@ bool dbClientRemoveValue(DbClient *self, char *key);
  * @param objects A hashtable <char *key, DbObject *object> to update
  * @return true on success, false otherwise.
  */
-bool dbClientUpdateValues(DbClient *self, zhash_t *objects);
-bool dbClientUpdateValue(DbClient *self, char *key, DbObject *object);
+bool dbClientUpdateObjects(DbClient *self, zhash_t *objects);
+bool dbClientUpdateObject(DbClient *self, char *key, DbObject *object);
+
+/**
+ * Start DbClient actor
+ * @param self A pointer to an allocated DbClient.
+ * @return true on success, false otherwise.
+ */
+bool dbClientStart(DbClient *self);
+
 /**
  * Free an allocated DbClient structure.
  * @param self A pointer to an allocated DbClient.
@@ -121,3 +134,5 @@ void dbClientInfoFree(DbClientInfo *self);
  * @param self A pointer to an allocated DbClientInfo.
  */
 void dbClientInfoDestroy(DbClientInfo **self);
+
+

@@ -1,4 +1,4 @@
-/**
+ /**
  *
  *   ██████╗   ██╗ ███████╗ ███╗   ███╗ ██╗   ██╗
  *   ██╔══██╗ ███║ ██╔════╝ ████╗ ████║ ██║   ██║
@@ -13,6 +13,9 @@
 
 #include "admin_cmd.h"
 #include "common/commander/commander.h"
+#include "common/commander/inventory.h"
+#include "common/actor/item/item.h"
+#include "common/actor/item/item_factory.h"
 #include "common/redis/fields/redis_game_session.h"
 #include "common/redis/fields/redis_socket_session.h"
 #include "common/session/session.h"
@@ -33,49 +36,61 @@ bool adminCmdInit(void) {
     zhash_insert(adminCommands, "spawn",          adminCmdSpawnPc);
     zhash_insert(adminCommands, "jump",           adminCmdJump);
     zhash_insert(adminCommands, "additem",        adminCmdAddItem);
+    zhash_insert(adminCommands, "addskill",       adminCmdAddSkill);
     zhash_insert(adminCommands, "test",           adminCmdTest);
     zhash_insert(adminCommands, "where",          adminCmdWhere);
     zhash_insert(adminCommands, "changeCamera",   adminCmdChangeCamera);
     zhash_insert(adminCommands, "setStamina",     adminCmdSetStamina);
     zhash_insert(adminCommands, "setSP",          adminCmdSetSP);
     zhash_insert(adminCommands, "setLevel",       adminCmdSetLevel);
+    zhash_insert(adminCommands, "setJobPoints",   adminCmdSetJobPoints);
+    zhash_insert(adminCommands, "setSpeed",       adminCmdSetSpeed);
 
     return true;
 }
 
-void adminCmdProcess(Worker *self, char *command, Session *session, zmsg_t *replyMsg) {
+bool adminCmdProcess(Worker *self, char *_command, Session *session, zmsg_t *replyMsg) {
 
     void (*handler) (Worker *self, Session *session, char *args, zmsg_t *replyMsg);
+    char command[strlen(_command) + 1];
+    strncpy(command, _command, sizeof(command));
+
     char *commandName = strtok(command, " ");
     if (!commandName) {
         warning ("Cannot read command '%s'", command);
-        return;
+        return false;
     }
 
     handler = zhash_lookup(adminCommands, commandName);
     if (!handler) {
         warning ("No admin command '%s' found. (entire command : '%s')", commandName, command);
-        return;
+        return false;
     }
 
     handler(self, session, command + strlen (commandName) + 1, replyMsg);
+    return true;
+}
+
+void adminCmdSetSpeed(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
+    int speed = strtol(args, &args, 10);
+    zoneBuilderMoveSpeed(session->game.commanderSession.currentCommander->pcId, speed, replyMsg);
 }
 
 void adminCmdSpawnPc(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
 
     // add a fake commander with a fake account
-    CommanderInfo fakePc;
-    commanderInfoInit(&fakePc);
+    Commander fakePc;
+    commanderInit(&fakePc);
 
-    fakePc.pos = session->game.commanderSession.currentCommander.info.pos;
-    fakePc.appearance.accountId = r1emuGenerateRandom64(&self->seed);
+    fakePc.pos = session->game.commanderSession.currentCommander->pos;
+    fakePc.dir = session->game.commanderSession.currentCommander->dir;
+    fakePc.accountId = r1emuGenerateRandom64(&self->seed);
     fakePc.socialInfoId = r1emuGenerateRandom64(&self->seed);
     fakePc.pcId = r1emuGenerateRandom(&self->seed);
     fakePc.commanderId = r1emuGenerateRandom64(&self->seed);
-    snprintf(fakePc.appearance.familyName, sizeof(fakePc.appearance.familyName),
-        "PcID_%x", fakePc.pcId);
-    snprintf(fakePc.appearance.commanderName, sizeof(fakePc.appearance.commanderName),
-        "AccountID_%llx", fakePc.appearance.accountId);
+    snprintf(fakePc.familyName, sizeof(fakePc.familyName), "PcID_%x", fakePc.pcId);
+    snprintf(fakePc.commanderName, sizeof(fakePc.commanderName),
+        "AccountID_%llx", fakePc.accountId);
 
     // register the fake socket session
     SocketSession fakeSocketSession;
@@ -84,7 +99,7 @@ void adminCmdSpawnPc(Worker *self, Session *session, char *args, zmsg_t *replyMs
 
     socketSessionGenSessionKey((uint8_t *)&sessionKey, sessionKeyStr);
     sprintf(sessionKeyStr, "%.08x", sessionKey);
-    socketSessionInit(&fakeSocketSession, fakePc.appearance.accountId, self->info.routerId, session->socket.mapId,
+    socketSessionInit(&fakeSocketSession, fakePc.accountId, self->info.routerId, session->socket.mapId,
         sessionKeyStr, true);
 
     RedisSocketSessionKey socketKey = {
@@ -107,12 +122,12 @@ void adminCmdSpawnPc(Worker *self, Session *session, char *args, zmsg_t *replyMs
 
     redisUpdateGameSession(self->redis, &gameKey, sessionKeyStr, &fakeGameSession);
     info("Fake PC spawned.(SocketID=%s, SocialID=%I64x, AccID=%I64x, PcID=%x, CommID=%I64x)",
-         sessionKeyStr, fakePc.socialInfoId, fakePc.appearance.accountId, fakePc.pcId, fakePc.commanderId);
+         sessionKeyStr, fakePc.socialInfoId, fakePc.accountId, fakePc.pcId, fakePc.commanderId);
 
     GameEventEnterPc event = {
         .updatePosEvent = {
             .mapId = fakeSocketSession.mapId,
-            .info = fakePc
+            .commander = fakePc
         }
     };
 
@@ -121,19 +136,57 @@ void adminCmdSpawnPc(Worker *self, Session *session, char *args, zmsg_t *replyMs
 
 void adminCmdAddItem(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
 
-    uint32_t itemId = strtol(args, &args, 10);
+    Item *newItem = NULL;
+
+    ItemId_t itemId = strtol(args, &args, 10);
     args++;
-    uint32_t amount = strtol(args, &args, 10);
+    ItemAmount_t amount = strtol(args, &args, 10);
+    amount = amount ? amount : 1;
 
-    uint32_t itemPosition = 1;
+    // Create new item
+    if (!(newItem = itemFactoryCreate(itemId, amount))) {
+        error("Item ID = %d is invalid.", itemId);
+        return;
+    }
 
-    ItemPkt item = {
-        .uniqueId = r1emuGenerateRandom64(&self->seed),
-        .amount = (!amount) ? 1 : amount,
-        .inventoryIndex = INVENTORY_CAT_SIZE * INVENTORY_CAT_CONSUMABLE + itemPosition,
-        .id = itemId
-    };
-    zoneBuilderItemAdd(&item, INVENTORY_ADD_PICKUP, replyMsg);
+    Inventory *inventory = &session->game.commanderSession.currentCommander->inventory;
+    inventoryAddItem(inventory, newItem);
+
+    ItemCategory_t itemCategory = itemGetCategory(newItem);
+    ActorId_t actorId = actorGetUId(newItem);
+
+    dbg("itemCategory %d", itemCategory);
+
+    ItemInventoryIndex_t inventoryIndex = inventoryGetBagIndexByActorId(inventory, itemCategory, actorId);
+
+    dbg("inventoryIndex %d", inventoryIndex);
+    zoneBuilderItemAdd(newItem, inventoryIndex, INVENTORY_ADD_PICKUP, replyMsg);
+}
+
+void adminCmdAddSkill(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
+
+    SkillId_t skillId = strtol(args, &args, 10);
+    args++;
+    SkillLevel_t level = strtol(args, &args, 10);
+    skillId = skillId ? skillId : 40001; // Heal
+    level = level ? level : 1;
+
+    // SkillsManager *skillsManager = &session->game.commanderSession.currentCommander->skillsManager;
+
+    /*
+    Item *newItem = itemFactoryCreate(itemId, amount);
+    skillsManagerAddskill(skillsManager, newItem);
+
+    ItemCategory_t itemCategory = itemGetCategory(newItem);
+    ActorId_t actorId = actorGetUId(newItem);
+
+    dbg("itemCategory %d", itemCategory);
+
+    ItemInventoryIndex_t inventoryIndex = inventoryGetBagIndexByActorId(inventory, itemCategory, actorId);
+
+    dbg("inventoryIndex %d", inventoryIndex);
+    */
+    zoneBuilderSkillAdd(skillId, replyMsg);
 }
 
 void adminCmdJump(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
@@ -160,8 +213,9 @@ void adminCmdJump(Worker *self, Session *session, char *args, zmsg_t *replyMsg) 
             info("y = %.6f", position.y);
             position.z = atof(arg[2]);
             info("z = %.6f", position.z);
-            session->game.commanderSession.currentCommander.info.pos = position;
-            zoneBuilderSetPos(session->game.commanderSession.currentCommander.info.pcId, &position, replyMsg);
+            session->game.commanderSession.currentCommander->pos = position;
+            session->game.commanderSession.currentCommander->dir = PositionXZ_decl(0, 0);
+            zoneBuilderSetPos(session->game.commanderSession.currentCommander->pcId, &position, replyMsg);
         }
         free(arg);
     }
@@ -185,12 +239,12 @@ void adminCmdWhere(Worker *self, Session *session, char *args, zmsg_t *replyMsg)
     const uint16_t MAX_LEN = 128;
     char message[MAX_LEN];
     PositionXYZ position;
-    position = session->game.commanderSession.currentCommander.info.pos;
+    position = session->game.commanderSession.currentCommander->pos;
     snprintf(message, sizeof(message), "[%hu] x = %.0f, y = %.0f, z = %.0f",
-        session->game.commanderSession.mapId,
+        session->game.commanderSession.currentCommander->mapId,
         position.x, position.y, position.z);
 
-    zoneBuilderChat(&session->game.commanderSession.currentCommander.info, message, replyMsg);
+    zoneBuilderChat(session->game.commanderSession.currentCommander, message, replyMsg);
 }
 
 void adminCmdChangeCamera(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
@@ -205,7 +259,7 @@ void adminCmdChangeCamera(Worker *self, Session *session, char *args, zmsg_t *re
         pos.x = 0;
         pos.y = 0;
         pos.z = 0;
-        zoneBuilderChangeCamera((uint8_t)0, &pos, (float)0, (float)0, replyMsg);
+        zoneBuilderChangeCamera(0, &pos, 0.0f, 0.0f, replyMsg);
     }
     else {
         char **arg;
@@ -216,22 +270,22 @@ void adminCmdChangeCamera(Worker *self, Session *session, char *args, zmsg_t *re
         while (arg[++argc] != NULL);
         if (argc >= 3) {
             pos.x = (strlen(arg[0]) == 1 && arg[0][0] == 'c') ?
-                session->game.commanderSession.currentCommander.info.pos.x : atof(arg[0]);
+                session->game.commanderSession.currentCommander->pos.x : atof(arg[0]);
             pos.y = (strlen(arg[1]) == 1 && arg[1][0] == 'c') ?
-                session->game.commanderSession.currentCommander.info.pos.y : atof(arg[1]);
+                session->game.commanderSession.currentCommander->pos.y : atof(arg[1]);
             pos.z = (strlen(arg[2]) == 1 && arg[2][0] == 'c') ?
-                session->game.commanderSession.currentCommander.info.pos.z : atof(arg[2]);
+                session->game.commanderSession.currentCommander->pos.z : atof(arg[2]);
         }
         if (argc == 3)
-            zoneBuilderChangeCamera((uint8_t)1, &pos, (float)10, (float)0.7, replyMsg);
+            zoneBuilderChangeCamera(1, &pos, 10.0f, 0.7f, replyMsg);
         else if (argc == 5) {
             fspd = atof(arg[3]);
             ispd = atof(arg[4]);
-            zoneBuilderChangeCamera((uint8_t)1, &pos, fspd, ispd, replyMsg);
+            zoneBuilderChangeCamera(1, &pos, fspd, ispd, replyMsg);
         }
         else {
             snprintf(message, sizeof(message), "Bad usage /changeCamera <x> <y> <z> {<fspd> <ispd>}");
-            zoneBuilderChat(&session->game.commanderSession.currentCommander.info, message, replyMsg);
+            zoneBuilderChat(session->game.commanderSession.currentCommander, message, replyMsg);
         }
         free(arg);
     }
@@ -253,9 +307,9 @@ void adminCmdSetStamina(Worker *self, Session *session, char *args, zmsg_t *repl
             info("Wrong number of arguments, must be 1.");
         }
         else {
-            uint32_t stamina = atoi(arg[0]) * 1000;
+            Stamina_t stamina = atoi(arg[0]) * 1000;
             info("Setting stamina to %d.", stamina);
-            session->game.commanderSession.currentCommander.info.currentStamina = stamina;
+            session->game.commanderSession.currentCommander->currentStamina = stamina;
             zoneBuilderStamina(stamina, replyMsg);
         }
         free(arg);
@@ -278,10 +332,48 @@ void adminCmdSetSP(Worker *self, Session *session, char *args, zmsg_t *replyMsg)
             info("Wrong number of arguments, must be 1.");
         }
         else {
-            uint32_t sp = atoi(arg[0]);
+            Sp_t sp = atoi(arg[0]);
             info("Setting SP to %d.", sp);
-            session->game.commanderSession.currentCommander.info.currentSP = sp;
-            zoneBuilderUpdateSP(session->game.commanderSession.currentCommander.info.pcId, sp, replyMsg);
+            session->game.commanderSession.currentCommander->currentSP = sp;
+            zoneBuilderUpdateSP(session->game.commanderSession.currentCommander->pcId, sp, replyMsg);
+
+
+            /// TESTING PURPOSES , to test HEAL SKILL
+            ActorId_t actorId = SWAP_UINT32(0x21680100);
+            SkillId_t skillId = 40001;
+            PositionXZ pos;
+            pos.x = 0;
+            pos.z = 0;
+
+            int AmountHealed = 10;
+            session->game.commanderSession.currentCommander->currentHP += AmountHealed;
+
+            // Heal info
+            zoneBuilderHealInfo(session->game.commanderSession.currentCommander->pcId,
+                AmountHealed,
+                session->game.commanderSession.currentCommander->maxHP, replyMsg);
+            // Update stats
+            zoneBuilderUpdateAllStatus(
+                session->game.commanderSession.currentCommander->pcId,
+                session->game.commanderSession.currentCommander->currentHP,
+                session->game.commanderSession.currentCommander->maxHP,
+                session->game.commanderSession.currentCommander->currentSP,
+                session->game.commanderSession.currentCommander->maxSP,
+                replyMsg);
+            // Effect in skill
+            zoneBuilderNormalUnk12_60(actorId, replyMsg);
+            // Effect in Commander
+            zoneBuilderBuffAdd(session->game.commanderSession.currentCommander->pcId, session->game.commanderSession.currentCommander, replyMsg);
+            // Disable skill
+            zoneBuilderNormalUnk10_56(
+                session->game.commanderSession.currentCommander->pcId,
+                skillId,
+                &session->game.commanderSession.currentCommander->pos,
+                &pos,
+                false,
+                replyMsg
+            );
+            /// END TEST
         }
         free(arg);
     }
@@ -303,10 +395,35 @@ void adminCmdSetLevel(Worker *self, Session *session, char *args, zmsg_t *replyM
             info("Wrong number of arguments, must be 1.");
         }
         else {
-            uint32_t level = atoi(arg[0]);
+            CommanderLevel_t level = atoi(arg[0]);
             info("Setting level to %d.", level);
-            session->game.commanderSession.currentCommander.info.appearance.level = level;
-            zoneBuilderPCLevelUp(session->game.commanderSession.currentCommander.info.pcId, level, replyMsg);
+            session->game.commanderSession.currentCommander->level = level;
+            zoneBuilderPCLevelUp(session->game.commanderSession.currentCommander->pcId, level, replyMsg);
+        }
+        free(arg);
+    }
+}
+
+void adminCmdSetJobPoints(Worker *self, Session *session, char *args, zmsg_t *replyMsg) {
+    if (strlen (args) == 0) {
+        info("Set job points needs a argument!");
+    }
+    else {
+        char **arg;
+        int argc;
+
+        info("Set job points with argument: %s", args);
+        arg = strSplit(args, ' ');
+        argc = 0;
+        while (arg[++argc] != NULL);
+        if (argc != 2) {
+            info("Wrong number of arguments, must be 2.");
+        }
+        else {
+            CommanderJobId_t jobId = atoi(arg[0]);
+            uint16_t points = atoi(arg[1]);
+            info("Setting job %d, points to to %d.", jobId, points);
+            zoneBuilderJobPoints(jobId, points, replyMsg);
         }
         free(arg);
     }

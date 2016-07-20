@@ -23,12 +23,15 @@
 
 #pragma once
 
+// Includes
 #include "R1EMU.h"
 #include "event_server.h"
 #include "common/mysql/mysql.h"
 #include "common/redis/redis.h"
 #include "common/session/session.h"
+#include "common/db/db_client.h"
 
+// Types definition
 typedef struct _PacketHandler PacketHandler;
 typedef struct _WorkerInfo WorkerInfo;
 typedef struct _Worker Worker;
@@ -101,8 +104,8 @@ struct _Worker {
     // the publisher socket to send asynchronous messages to the Event Server
     zsock_t *eventServer;
 
-    // the connection to the session manager
-    zsock_t *sessionManager;
+    // the connection to the session db
+    DbClient *dbSession;
 
     // seed for the random generator
     uint32_t seed;
@@ -168,7 +171,7 @@ bool workerInit(Worker *self, WorkerInfo *info);
 bool workerInfoInit(
     WorkerInfo *self,
     uint16_t workerId,
-    uint16_t routerId,
+    RouterId_t routerId,
     ServerType serverType,
     char *globalServerIp,
     int globalServerPort,

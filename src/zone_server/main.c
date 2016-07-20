@@ -29,7 +29,7 @@
 int main (int argc, char **argv)
 {
     if (argc <= 1) {
-        info("Please launch GlobalServer instead of ZoneServer. (argc=%d)", argc);
+        info("Please launch global_server instead of zone_server. (argc=%d)", argc);
         exit (0);
     }
 
@@ -50,7 +50,7 @@ int main (int argc, char **argv)
     #endif
 
     // === Read the command line arguments ===
-    uint16_t routerId = atoi(*++argv);
+    RouterId_t routerId = atoi(*++argv);
     char *routerIp = *++argv;
     int port = atoi(*++argv);
     uint16_t workersCount = atoi(*++argv);

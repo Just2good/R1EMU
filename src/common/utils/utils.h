@@ -24,6 +24,12 @@
 #include "zlib.h"
 
 #define STRINGIFY(x) # x
+
+// {Enum, String} association generators
+#define GENERATE_ENUM(PREFIX, ENUM, FORMAT) PREFIX##_##ENUM,
+#define GENERATE_STRING(PREFIX, STRING, FORMAT) #STRING,
+#define GENERATE_TYPE(PREFIX, STRING, FORMAT) #FORMAT,
+
 #ifndef bool
 #define bool char
 #endif
@@ -41,6 +47,10 @@
 // size of structure member
 #define sizeof_struct_member(struct, member) \
    (sizeof(((struct *)0)->member))
+
+// type of structure member
+#define typeof_struct_member(struct, member) \
+    typeof(((struct *)0)->member)
 
 // quotify a string
 #define QUOTIFY(x) "\"" x "\""

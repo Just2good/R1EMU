@@ -23,7 +23,7 @@
 /**
  * @brief : Decide which admin commands is going to be executed based on the command line
  */
-void adminCmdProcess(Worker *self, char *command, Session *session, zmsg_t *replyMsg);
+bool adminCmdProcess(Worker *self, char *command, Session *session, zmsg_t *replyMsg);
 
 /**
  * @brief : Spawn a commander at the place of the current commander.
@@ -40,6 +40,12 @@ void adminCmdJump(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
  *          /addItem <itemId> <quantity>
  */
 void adminCmdAddItem(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
+
+/**
+ * @brief : Add any skill in the commander skillManager
+ *          /addSkill <skillId> <level>
+ */
+void adminCmdAddSkill(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
 
 /**
  * @brief : A test command
@@ -59,6 +65,7 @@ void adminCmdWhere(Worker *self, Session *session, char *args, zmsg_t *replyMsg)
 
 /**
  * @brief : Change the camera position
+ *          /changeCamera <x> <y> <z> {<fspd> <ispd>}
  */
 void adminCmdChangeCamera(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
 
@@ -72,7 +79,19 @@ void adminCmdChangeCamera(Worker *self, Session *session, char *args, zmsg_t *re
  */
  void adminCmdSetSP(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
 
- /**
- * @brief : Set player level
+/**
+ * @brief : Set player character level
  */
  void adminCmdSetLevel(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
+
+/**
+ * @brief : Set player job level
+ */
+ void adminCmdSetJobPoints(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
+
+
+/**
+ * @brief : Set player movement speed
+ */
+ void adminCmdSetSpeed(Worker *self, Session *session, char *args, zmsg_t *replyMsg);
+

@@ -23,7 +23,7 @@ typedef enum MySQLStatus {
     SQL_ERROR = -1,
 } MySQLStatus;
 
-#define MAX_QUERY_SIZE 1024
+#define MAX_QUERY_SIZE 4096
 
 typedef struct MySQLInfo {
     // the MySQL hostname
@@ -56,7 +56,7 @@ typedef struct MySQL MySQL;
 /**
  * @brief Allocate a new MySQL structure.
  * @param info An initialized MySQLInfo.
- * @return A pointer to an allocated MySQL, or NULL if an error occured.
+ * @return A pointer to an allocated MySQL, or NULL if an error occurred.
  */
 MySQL *mySqlNew(MySQLInfo *info);
 

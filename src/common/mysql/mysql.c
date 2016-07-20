@@ -80,6 +80,7 @@ MySQLStatus mySqlQuery(MySQL *self, const char* query, ...) {
 	char buf[MAX_QUERY_SIZE];
 
 	if (self->handle == NULL) {
+        error("MySQL hasn't been initialized yet.");
 		return SQL_ERROR;
 	}
 
@@ -91,7 +92,7 @@ MySQLStatus mySqlQuery(MySQL *self, const char* query, ...) {
 
 	dbg("Launching SQL command : %s", buf);
 
-	if (mysql_real_query(self->handle, buf,(unsigned long) strlen(buf))) {
+	if (mysql_real_query(self->handle, buf, (unsigned long) strlen(buf))) {
 		return SQL_ERROR;
 	}
 

@@ -19,10 +19,8 @@
 // ---------- Includes ------------
 #include "game_session.h"
 
-GameSession *
-gameSessionNew (
-    CommanderInfo *commander
-) {
+GameSession *gameSessionNew(Commander *commander) {
+
     GameSession *self;
 
     if ((self = calloc(1, sizeof(GameSession))) == NULL) {
@@ -38,39 +36,35 @@ gameSessionNew (
     return self;
 }
 
-bool
-gameSessionInit (
-    GameSession *self,
-    CommanderInfo *commander
-) {
+bool gameSessionInit(GameSession *self, Commander *commander) {
+
     memset(self, 0, sizeof(GameSession));
 
-    commanderSessionInit (&self->commanderSession, commander);
-    barrackSessionInit (&self->barrackSession);
+    if (!(accountSessionInit(&self->accountSession, "undefined", "undefined", ACCOUNT_SESSION_PRIVILEGES_PLAYER))) {
+        error("Cannot initialize the account session.");
+        return false;
+    }
+
+    if (!(commanderSessionInit(&self->commanderSession, commander))) {
+        error("Cannot initialize the commander session.");
+        return false;
+    }
 
     return true;
 }
 
-void
-gameSessionPrint (
-    GameSession *self
-) {
+void gameSessionPrint(GameSession *self) {
+
     dbg("==== GameSession %p ====", self);
-    barrackSessionPrint (&self->barrackSession);
+    accountSessionPrint(&self->accountSession);
     commanderSessionPrint (&self->commanderSession);
 }
 
-void
-gameSessionDestroy (
-    GameSession **_self
-) {
+void gameSessionDestroy(GameSession **_self) {
     gameSessionFree (*_self);
     *_self = NULL;
 }
 
-void
-gameSessionFree (
-    GameSession *self
-) {
+void gameSessionFree(GameSession *self) {
     free(self);
 }

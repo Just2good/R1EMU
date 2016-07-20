@@ -45,7 +45,7 @@ Redis *redisNew(RedisInfo *info) {
     }
 
     if (!redisInit (self, info)) {
-        redisDestroy (&self);
+        redisDestroy(&self);
         error("Redis failed to initialize.");
         return NULL;
     }
@@ -158,7 +158,7 @@ redisReply *redisCommandDbg(Redis *self, char * format, ...) {
         vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
 
-    // special("%s", buffer);
+    //special("%s", buffer);
     return redisCommand(self->context, buffer);
 }
 
@@ -248,7 +248,7 @@ void redisDestroy(Redis **_self) {
     Redis *self = *_self;
 
     if (_self && self) {
-        redisInfoFree (&self->info);
+        redisInfoFree(&self->info);
 
         if (self->context) {
             redisFree (self->context);

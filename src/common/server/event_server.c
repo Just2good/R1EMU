@@ -148,7 +148,7 @@ bool graphNodeClientInit (GraphNodeClient *self) {
 }
 
 bool eventServerInfoInit (EventServerInfo *self,
-    uint16_t routerId,
+    RouterId_t routerId,
     uint16_t workersCount,
     char *redisHostname,
     int redisPort
@@ -174,7 +174,7 @@ EventServer_handleEvent (
     zframe_t *eventTypeFrame;
 
     // Get the event type frame
-    if (!(eventTypeFrame = zmsg_first (msg))) {
+    if (!(eventTypeFrame = zmsg_first(msg))) {
         error("Event type cannot be retrieved.");
         return false;
     }
@@ -202,7 +202,7 @@ EventServer_handleEvent (
 bool
 eventServerGetGameSessionBySocketId (
     EventServer *self,
-    uint16_t routerId,
+    RouterId_t routerId,
     uint8_t *socketId,
     GameSession *gameSession
 ) {
@@ -230,7 +230,7 @@ eventServerSubscribe (
 
     // Convert the header frame to a EventServerHeader
     EventServerHeader packetHeader = *((EventServerHeader *) zframe_data(header));
-    zframe_destroy (&header);
+    zframe_destroy(&header);
 
     switch (packetHeader)
     {
@@ -253,20 +253,20 @@ eventServerSubscribe (
 }
 
 bool
-eventServerSendToClients (
+eventServerSendToClients(
     EventServer *self,
     zlist_t *clients,
     zmsg_t *broadcastMsg
 ) {
     bool result = true;
     zmsg_t *msg = NULL;
-    zframe_t *frame = zmsg_first (broadcastMsg);
+    zframe_t *frame = zmsg_first(broadcastMsg);
     uint8_t *packet = zframe_data(frame);
-    size_t packetLen = zframe_size (frame);
+    size_t packetLen = zframe_size(frame);
 
-    if ((!(msg = zmsg_new ()))
-    ||  zmsg_addmem (msg, PACKET_HEADER (ROUTER_WORKER_MULTICAST), sizeof(ROUTER_WORKER_MULTICAST)) != 0
-    ||  zmsg_addmem (msg, packet, packetLen) != 0
+    if ((!(msg = zmsg_new()))
+    ||  zmsg_addmem(msg, PACKET_HEADER (ROUTER_WORKER_MULTICAST), sizeof(ROUTER_WORKER_MULTICAST)) != 0
+    ||  zmsg_addmem(msg, packet, packetLen) != 0
     ) {
         error("Cannot build the multicast packet.");
         result = false;
@@ -275,18 +275,18 @@ eventServerSendToClients (
 
     // [1 frame data] + [1 frame identity] + [1 frame identity] + ...
     char *identityKey;
-    for (identityKey = zlist_first (clients); identityKey != NULL; identityKey = zlist_next (clients)) {
+    for (identityKey = zlist_first(clients); identityKey != NULL; identityKey = zlist_next(clients)) {
         // Add all the clients to the packet
         uint8_t identityBytes[5];
         socketSessionGenId (identityKey, identityBytes);
-        if (zmsg_addmem (msg, identityBytes, sizeof(identityBytes)) != 0) {
+        if (zmsg_addmem(msg, identityBytes, sizeof(identityBytes)) != 0) {
             error("Cannot add the identity in the message.");
             result = false;
             goto cleanup;
         }
     }
 
-    if (zmsg_send (&msg, self->router) != 0) {
+    if (zmsg_send(&msg, self->router) != 0) {
         error("Cannot send the multicast packet to the Router.");
         result = false;
         goto cleanup;
@@ -315,17 +315,17 @@ bool eventServerDispatchEvent(
     memcpy (&gameEvent.data, event, eventSize);
     size_t gameEventSize = sizeof(GameEvent) - sizeof (EventDataCategories) + eventSize;
 
-    if ((!(msg = zmsg_new ()))
-    ||  zmsg_addmem (msg, PACKET_HEADER (EVENT_SERVER_EVENT), sizeof(EVENT_SERVER_EVENT)) != 0
-    ||  zmsg_addmem (msg, PACKET_HEADER (eventType), sizeof(eventType)) != 0
-    ||  zmsg_addmem (msg, &gameEvent, gameEventSize) != 0
+    if ((!(msg = zmsg_new()))
+    ||  zmsg_addmem(msg, PACKET_HEADER (EVENT_SERVER_EVENT), sizeof(EVENT_SERVER_EVENT)) != 0
+    ||  zmsg_addmem(msg, PACKET_HEADER (eventType), sizeof(eventType)) != 0
+    ||  zmsg_addmem(msg, &gameEvent, gameEventSize) != 0
     ) {
         error("Cannot build the event message.");
         result = false;
         goto cleanup;
     }
 
-    if (zmsg_send (&msg, eventServer) != 0) {
+    if (zmsg_send(&msg, eventServer) != 0) {
         error("Cannot send the event packet.");
         result = false;
         goto cleanup;
@@ -346,9 +346,9 @@ eventServerSendToClient (
     bool result = true;
     zmsg_t *msg = NULL;
 
-    if ((!(msg = zmsg_new ()))
-    ||  zmsg_addmem (msg, PACKET_HEADER (ROUTER_WORKER_MULTICAST), sizeof(ROUTER_WORKER_MULTICAST)) != 0
-    ||  zmsg_addmem (msg, packet, packetLen) != 0
+    if ((!(msg = zmsg_new()))
+    ||  zmsg_addmem(msg, PACKET_HEADER (ROUTER_WORKER_MULTICAST), sizeof(ROUTER_WORKER_MULTICAST)) != 0
+    ||  zmsg_addmem(msg, packet, packetLen) != 0
     ) {
         error("Cannot build the multicast packet.");
         result = false;
@@ -358,13 +358,13 @@ eventServerSendToClient (
     // Add the client identity to the packet
     uint8_t identityBytes[5];
     socketSessionGenId (identityKey, identityBytes);
-    if (zmsg_addmem (msg, identityBytes, sizeof(identityBytes)) != 0) {
+    if (zmsg_addmem(msg, identityBytes, sizeof(identityBytes)) != 0) {
         error("Cannot add the identity in the message.");
         result = false;
         goto cleanup;
     }
 
-    if (zmsg_send (&msg, self->router) != 0) {
+    if (zmsg_send(&msg, self->router) != 0) {
         error("Cannot send the multicast packet to the Router.");
         result = false;
         goto cleanup;
@@ -383,14 +383,14 @@ eventServerGetRouterId (
 }
 
 zlist_t *
-eventServerRedisGetClientsWithinRange (
+eventServerRedisGetClientsWithinRange(
     EventServer *self,
-    uint16_t mapId,
+    MapId_t mapId,
     uint8_t *ignoredSessionKey,
     PositionXZ *position,
     float range
 ) {
-    return redisGetClientsWithinDistance (self->redis, self->info.routerId, mapId, position, range, ignoredSessionKey);
+    return redisGetClientsWithinDistance(self->redis, self->info.routerId, mapId, position, range, ignoredSessionKey);
 }
 
 bool eventServerRemoveClient(EventServer *self, uint8_t *sessionKey)
@@ -435,7 +435,7 @@ eventServerGetClientsAround (
     }
 
     // Add the neighbors keys to the clients list
-    for (GraphArc *arc = zlist_first (node->arcs); arc != NULL; arc = zlist_next (node->arcs)) {
+    for (GraphArc *arc = zlist_first(node->arcs); arc != NULL; arc = zlist_next(node->arcs)) {
         GraphNode *nodeAround = arc->to;
         zlist_append(clients, nodeAround->key);
     }

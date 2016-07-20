@@ -14,6 +14,11 @@
 #include "db.h"
 #include "db_object.h"
 
+// extend debug messages
+#define dbError(self, x, ...) error("[%s:%d] " x, self->info.name, self->info.routerId, ##__VA_ARGS__)
+#define dbInfo(self, x, ...)  info("[%s:%d] " x, self->info.name, self->info.routerId, ##__VA_ARGS__)
+#define dbSpecial(self, x, ...)  special("[%s:%d] " x, self->info.name, self->info.routerId, ##__VA_ARGS__)
+
 /**
  * @brief Db contains a hashtable of generic objects that can be inserted, requested and deleted.
  *        Db is extensible to other modules
@@ -24,6 +29,9 @@ struct Db
 
     zsock_t *endpoint;
     zhash_t *hashtable;
+
+    void *heritage;
+    DbProcessMsgHandler handler;
 };
 
 Db *dbNew(DbInfo *dbInfo) {
@@ -48,31 +56,35 @@ bool dbInit(Db *self, DbInfo *dbInfo) {
     memcpy(&self->info, dbInfo, sizeof(self->info));
 
     if (!(self->hashtable = zhash_new())) {
-        error("Cannot allocate a new object hashtable.");
+        dbError(self, "Cannot allocate a new object hashtable.");
         return false;
     }
 
     if (!(self->endpoint = zsock_new (ZMQ_REP))) {
-        error("Cannot allocate a new endpoint.");
+        dbError(self, "Cannot allocate a new endpoint.");
         return false;
     }
 
     return true;
 }
 
-DbInfo *dbInfoNew(
-    uint16_t routerId,
-    char *dbName,
-    void *heritage,
-    DbProcessMsgHandler handler)
-{
+bool dbSetHeritage(Db *self, void *heritage, DbProcessMsgHandler handler) {
+
+    self->heritage = heritage;
+    self->handler = handler;
+
+    return true;
+}
+
+DbInfo *dbInfoNew(RouterId_t routerId, char *dbName) {
+
     DbInfo *self;
 
     if ((self = malloc(sizeof(DbInfo))) == NULL) {
         return NULL;
     }
 
-    if (!dbInfoInit(self, routerId, dbName, heritage, handler)) {
+    if (!dbInfoInit(self, routerId, dbName)) {
         dbInfoDestroy(&self);
         error("DbInfo failed to initialize.");
         return NULL;
@@ -81,19 +93,12 @@ DbInfo *dbInfoNew(
     return self;
 }
 
-bool dbInfoInit(
-    DbInfo *self,
-    uint16_t routerId,
-    char *dbName,
-    void *heritage,
-    DbProcessMsgHandler handler)
-{
+bool dbInfoInit(DbInfo *self, RouterId_t routerId, char *dbName) {
+
     memset(self, 0, sizeof(DbInfo));
 
     self->routerId = routerId;
     self->name = strdup(dbName);
-    self->heritage = heritage;
-    self->handler = handler;
 
     return true;
 }
@@ -106,7 +111,7 @@ bool dbUpdateArray(Db *self, zmsg_t *msg, zmsg_t *out) {
 
     // header success
     if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_SUCCESS), sizeof(DB_STATUS_SUCCESS))) != 0) {
-        error("Cannot add the packet header to the msg.");
+        dbError(self, "Cannot add the packet header to the msg.");
         goto cleanup;
     }
 
@@ -116,7 +121,7 @@ bool dbUpdateArray(Db *self, zmsg_t *msg, zmsg_t *out) {
 
         // each key is followed by its updated object
         if (!(objectFrame = zmsg_pop(msg))) {
-            error("'%s:%d' : Cannot read the object '%s'.", self->info.name, self->info.routerId, key);
+            dbError(self, "Cannot read the object '%s'.", key);
             goto cleanup;
         }
 
@@ -126,16 +131,17 @@ bool dbUpdateArray(Db *self, zmsg_t *msg, zmsg_t *out) {
         DbObject *dbObject = NULL;
 
         if (!(dbObject = zhash_lookup(self->hashtable, key))) {
+            // dbObject doesn't already exist
 
-            // dbObject doesn't already exist : create it
-            if (!(dbObject = dbObjectNew(dataSize, data))) {
-                error("'%s:%d' : Cannot allocate a new object for '%s'.", self->info.name, self->info.routerId, key);
+            // create it
+            if (!(dbObject = dbObjectNew(dataSize, data, false))) {
+                dbError(self, "Cannot allocate a new object for '%s'.", key);
                 goto cleanup;
             }
 
             // insert it
             if (zhash_insert(self->hashtable, key, dbObject) != 0) {
-                error("'%s:%d' : Cannot insert the new object in '%s'.", self->info.name, self->info.routerId, key);
+                dbError(self, "Cannot insert the new object in '%s'.", key);
                 goto cleanup;
             }
         } else {
@@ -157,11 +163,6 @@ cleanup:
         while ((frame = zmsg_pop(out)) != NULL) {
             zframe_destroy(&frame);
         }
-
-        // fill the msg with an error code
-        if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_CANNOT_UPDATE), sizeof(DB_STATUS_CANNOT_UPDATE))) != 0) {
-            error("Cannot add the packet header to the msg.");
-        }
     }
 
     zframe_destroy(&keyFrame);
@@ -176,7 +177,7 @@ bool dbRemoveArray(Db *self, zmsg_t *msg, zmsg_t *out) {
 
     // header success
     if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_SUCCESS), sizeof(DB_STATUS_SUCCESS))) != 0) {
-        error("Cannot add the packet header to the msg.");
+        dbError(self, "Cannot add the packet header to the msg.");
         goto cleanup;
     }
 
@@ -187,8 +188,7 @@ bool dbRemoveArray(Db *self, zmsg_t *msg, zmsg_t *out) {
         DbObject *dbObject = NULL;
 
         if (!(dbObject = zhash_lookup(self->hashtable, key))) {
-            error("%s:%d : Cannot remove item '%s', because it doesn't exist.",
-                  self->info.name, self->info.routerId, key);
+            dbError(self, "Cannot remove item '%s', because it doesn't exist.", key);
         }
 
         // delete value from hashtable
@@ -211,11 +211,6 @@ cleanup:
         while ((frame = zmsg_pop(out)) != NULL) {
             zframe_destroy(&frame);
         }
-
-        // fill the msg with an error code
-        if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_CANNOT_REMOVE), sizeof(DB_STATUS_CANNOT_REMOVE))) != 0) {
-            error("Cannot add the packet header to the msg.");
-        }
     }
 
     zframe_destroy(&keyFrame);
@@ -230,7 +225,7 @@ bool dbGetArray(Db *self, zmsg_t *in, zmsg_t *out) {
 
     // header success
     if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_SUCCESS), sizeof(DB_STATUS_SUCCESS))) != 0) {
-        error("Cannot add the packet header to the msg.");
+        dbError(self, "Cannot add the packet header to the msg.");
         goto cleanup;
     }
 
@@ -240,19 +235,19 @@ bool dbGetArray(Db *self, zmsg_t *in, zmsg_t *out) {
 
         // lookup if the item exists
         if (!(dbObject = zhash_lookup(self->hashtable, key))) {
-            error("'%s:%d' : Cannot find the object in '%s'.", self->info.name, self->info.routerId, key);
+            dbError(self, "Cannot find the object '%s'.", key);
             goto cleanup;
         }
 
         // add to the key to the message
         if (zmsg_addstr(out, key) != 0) {
-            error("'%s:%d' : Cannot add key '%s' to the message.", self->info.name, self->info.routerId, key);
+            dbError(self, "Cannot add key '%s' to the message.", key);
             goto cleanup;
         }
 
         // add to the associated object to the message
         if (zmsg_addmem(out, dbObject->data, dbObject->dataSize) != 0) {
-            error("'%s:%d' : Cannot add object '%s' to the message.", self->info.name, self->info.routerId, key);
+            dbError(self, "Cannot add object '%s' to the message.", key);
             goto cleanup;
         }
 
@@ -269,11 +264,6 @@ cleanup:
         while ((frame = zmsg_pop(out)) != NULL) {
             zframe_destroy(&frame);
         }
-
-        // fill the msg with an error code
-        if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_CANNOT_GET), sizeof(DB_STATUS_CANNOT_GET))) != 0) {
-            error("Cannot add the packet header to the msg.");
-        }
     }
 
     zframe_destroy(&keyFrame);
@@ -286,17 +276,19 @@ void *dbMainLoop(void *arg) {
     zmsg_t *msg = NULL;
     zframe_t *packetTypeFrame = NULL;
 
+    dbInfo (self, "Listening to requests...");
+
     while (true) {
         msg = zmsg_recv(self->endpoint);
 
         if (!msg) {
-            error("%s:%d : Cannot receive a message.", self->info.name, self->info.routerId);
+            dbError(self, "Cannot receive a message.");
             break;
         }
 
         // read packet type
         if (!(packetTypeFrame = zmsg_pop(msg))) {
-            error("%s:%d : Cannot read the packet type frame.", self->info.name, self->info.routerId);
+            dbError(self, "Cannot read the packet type frame.");
             break;
         }
         DbPacketType packetType = *((typeof(packetType) *) zframe_data(packetTypeFrame));
@@ -304,7 +296,7 @@ void *dbMainLoop(void *arg) {
         // create output message
         zmsg_t *out = NULL;
         if (!(out = zmsg_new())) {
-            error("Cannot allocate output zmsg.");
+            dbError(self, "Cannot allocate output zmsg.");
             break;
         }
 
@@ -315,7 +307,12 @@ void *dbMainLoop(void *arg) {
             case DB_UPDATE_OBJECT:
             case DB_UPDATE_ARRAY:
                 if (!(dbUpdateArray(self, msg, out))) {
-                    error("%s:%d : Cannot insert new object", self->info.name, self->info.routerId);
+                    dbError(self, "Cannot insert new object");
+
+                    // fill the msg with an error code
+                    if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_CANNOT_UPDATE), sizeof(DB_STATUS_CANNOT_UPDATE))) != 0) {
+                        dbError(self, "Cannot add the packet header to the msg.");
+                    }
                 }
                 break;
 
@@ -323,7 +320,12 @@ void *dbMainLoop(void *arg) {
             case DB_GET_OBJECT:
             case DB_GET_ARRAY:
                 if (!(dbGetArray(self, msg, out))) {
-                    error("%s:%d : Cannot get object", self->info.name, self->info.routerId);
+                    dbError(self, "Cannot get object");
+
+                    // fill the msg with an error code
+                    if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_CANNOT_GET), sizeof(DB_STATUS_CANNOT_GET))) != 0) {
+                        dbError(self, "Cannot add the packet header to the msg.");
+                    }
                 }
                 break;
 
@@ -331,23 +333,27 @@ void *dbMainLoop(void *arg) {
             case DB_REMOVE_OBJECT:
             case DB_REMOVE_ARRAY:
                 if (!(dbRemoveArray(self, msg, out))) {
-                    error("%s:%d : Cannot remove object", self->info.name, self->info.routerId);
+                    dbError(self, "Cannot remove object");
+
+                    // fill the msg with an error code
+                    if ((zmsg_addmem(out, PACKET_HEADER(DB_STATUS_CANNOT_REMOVE), sizeof(DB_STATUS_CANNOT_REMOVE))) != 0) {
+                        dbError(self, "Cannot add the packet header to the msg.");
+                    }
                 }
                 break;
 
             default:
                 // extended messages
-                if (!(self->info.handler) || !(self->info.handler(self->info.heritage, msg, out))) {
+                if (!(self->handler) || !(self->handler(self->heritage, msg, out))) {
                     // message type unhandled
-                    error("%s:%d : Cannot process db message type=%d.",
-                          self->info.name, self->info.routerId, packetType);
+                    dbError(self, "Cannot process db message type=%d.", packetType);
                 }
                 break;
         }
 
         // send answer
         if (zmsg_send(&out, self->endpoint) != 0) {
-            error("%s:%d : Cannot send back the answer.", self->info.name, self->info.routerId);
+            dbError(self, "Cannot send back the answer.");
             break;
         }
 
@@ -355,7 +361,7 @@ void *dbMainLoop(void *arg) {
         zmsg_destroy(&msg);
     }
 
-    info("%s:%d : Stopped working.", self->info.name, self->info.routerId);
+    info("%s:%d : Stopped working.");
     return NULL;
 }
 
@@ -365,15 +371,15 @@ bool dbStart(Db *self) {
 
     // bind connection
     if ((zsock_bind(self->endpoint, endpointStr)) != 0) {
-        error("Cannot bind '%s'", endpointStr);
+        dbError(self, "Cannot bind '%s'", endpointStr);
         return false;
     }
 
-    info("%s binded.", endpointStr);
+    dbInfo(self, "%s binded.", endpointStr);
 
     // start actor thread
     if (zthread_new(dbMainLoop, self) != 0) {
-        error("Cannot start a new session manager loop.");
+        dbError(self, "Cannot start a new session manager loop.");
         return false;
     }
 

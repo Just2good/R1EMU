@@ -24,14 +24,14 @@
 
 int main(int argc, char **argv)
 {
-     // Get the configuration file
+    // Get the configuration file
     char *confFilePath = NULL;
 
     GlobalServer *globalServer = NULL;
     GlobalServerInfo info;
 
     // force the initialization of the CZMQ layer here.
-    if (!(zsys_init ())) {
+    if (!(zsys_init())) {
         error("Cannot init CZMQ.");
         goto cleanup;
     }

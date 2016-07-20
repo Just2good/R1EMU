@@ -18,14 +18,18 @@
 #include "zone_handler/admin_cmd.h"
 #include "common/server/server.h"
 #include "common/db/db.h"
+#include "common/actor/item/item_factory.h"
 
 /**
  * @brief ZoneServer is the representation of the zone server system
  */
 struct ZoneServer
 {
-    // ZoneServer inherits from Server object
+    /** ZoneServer inherits from Server object */
     Server *server;
+
+    /** Connection to the dbSession */
+    Db *dbSession;
 };
 
 ZoneServer *zoneServerNew(Server *server) {
@@ -46,7 +50,26 @@ ZoneServer *zoneServerNew(Server *server) {
 
 bool zoneServerInit(ZoneServer *self, Server *server) {
 
+    DbInfo dbInfo;
+
     self->server = server;
+    RouterId_t routerId = serverGetRouterId(server);
+
+    // Initialize dbSession
+    if (!(dbInfoInit(&dbInfo, routerId, "dbSession"))) {
+        error("Cannot initialize dbInfo.");
+        return false;
+    }
+    if (!(self->dbSession = dbNew(&dbInfo))) {
+        error("Cannot allocate a dbSession.");
+        return false;
+    }
+
+    // Initialize packets manager
+    if (!(packetTypeInit())) {
+        error("Cannot initialize packet manager.");
+        return false;
+    }
 
     return true;
 }
@@ -56,7 +79,20 @@ bool zoneServerStart(ZoneServer *self) {
     special("=== Zone server %d ===", serverGetRouterId(self->server));
     special("=====================");
 
+    // Start dbSession
+    if (!(dbStart(self->dbSession))) {
+        error("Cannot start sessions db.");
+        return false;
+    }
+
+    // Initialize itemFactory
+    if (!(itemFactoryStart(serverGetMySQLInfo(self->server)))) {
+        error("Cannot initialize item factory.");
+        return false;
+    }
+
     // Initialize admin commands module
+    // TODO : Initialize it in ZoneWorker (when ZoneWorker will exist...)
     if (!(adminCmdInit())) {
         error ("Cannot initialize admin commands module.");
         return false;

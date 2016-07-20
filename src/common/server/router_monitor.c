@@ -72,7 +72,7 @@ RouterMonitor *routerMonitorNew(RouterMonitorInfo *info) {
 
     RouterMonitor *self;
 
-    if ((self = calloc(1, sizeof(RouterMonitor))) == NULL) {
+    if ((self = malloc(sizeof(RouterMonitor))) == NULL) {
         return NULL;
     }
 
@@ -86,6 +86,8 @@ RouterMonitor *routerMonitorNew(RouterMonitorInfo *info) {
 }
 
 bool routerMonitorInit (RouterMonitor *self, RouterMonitorInfo *info) {
+
+    memset(self, 0, sizeof(*self));
 
     routerMonitorInfoInit (&self->info,
         info->frontend,
@@ -126,7 +128,7 @@ bool routerMonitorInit (RouterMonitor *self, RouterMonitorInfo *info) {
 
 RouterMonitorInfo *routerMonitorInfoNew(
     zsock_t *frontend,
-    uint16_t routerId,
+    RouterId_t routerId,
     RedisInfo *redisInfo,
     MySQLInfo *sqlInfo,
     DisconnectEventHandler disconnectHandler)
@@ -149,7 +151,7 @@ RouterMonitorInfo *routerMonitorInfoNew(
 bool routerMonitorInfoInit (
     RouterMonitorInfo *self,
     zsock_t *frontend,
-    uint16_t routerId,
+    RouterId_t routerId,
     RedisInfo *redisInfo,
     MySQLInfo *sqlInfo,
     DisconnectEventHandler disconnectHandler)
@@ -192,7 +194,7 @@ routerMonitorProcess (
     }
 
     // Get the frame header of the message
-    if (!(header = zmsg_first (msg))) {
+    if (!(header = zmsg_first(msg))) {
         error("Frame header cannot be retrieved.");
         result = -1;
         goto cleanup;
@@ -264,7 +266,7 @@ routerMonitorProcess (
             }
             // call router monitor disconnect handler
             routerMonitorDisconnectClient(self, fdClientKey, sessionKeyStr);
-            zframe_destroy (&clientFrame);
+            zframe_destroy(&clientFrame);
             info("%s session successfully flushed !", sessionKeyStr);
         }
     }
@@ -303,7 +305,7 @@ routerMonitorSubscribe (
     }
 
     // Get the frame header of the message
-    if (!(header = zmsg_first (msg))) {
+    if (!(header = zmsg_first(msg))) {
         error("Frame header cannot be retrieved.");
         result = -1;
         goto cleanup;
@@ -366,8 +368,8 @@ routerMonitorStart (
     zsock_t *pipe,
     void *info
 ) {
-    RouterMonitor self = {{0}};
-    routerMonitorInit (&self, info);
+    RouterMonitor self;
+    routerMonitorInit(&self, info);
 
     zactor_t *servermon = NULL;
     zsock_t *requests = NULL;
@@ -386,7 +388,7 @@ routerMonitorStart (
     }
 
     // Set up the Server Monitor Actor
-    if (!(servermon = zactor_new (zmonitor, self.info.frontend))) {
+    if (!(servermon = zactor_new(zmonitor, self.info.frontend))) {
         error("Cannot allocate a new server monitor actor.");
         goto cleanup;
     }
@@ -426,9 +428,9 @@ routerMonitorStart (
     info("Router Monitor is ready and running.");
     // Signal to the parent thread that the monitor is ready
     zsock_signal (pipe, 0);
-    zframe_send ((zframe_t *[]) {zframe_new (PACKET_HEADER (ROUTER_MONITOR_READY), sizeof(ROUTER_MONITOR_READY))}, pipe, 0);
+    zframe_send ((zframe_t *[]) {zframe_new(PACKET_HEADER (ROUTER_MONITOR_READY), sizeof(ROUTER_MONITOR_READY))}, pipe, 0);
 
-    if (zloop_start (reactor) != 0) {
+    if (zloop_start(reactor) != 0) {
         error("An error occurred in the reactor.");
         goto cleanup;
     }
@@ -454,8 +456,8 @@ routerMonitorFree (
     RouterMonitor *self
 ) {
     zhash_destroy (&self->connected);
-    redisDestroy (&self->redis);
-    mySqlDestroy (&self->sql);
+    redisDestroy(&self->redis);
+    mySqlDestroy(&self->sql);
 }
 
 void
@@ -476,8 +478,8 @@ void
 RouterMonitorInfo_free(
     RouterMonitorInfo *self
 ) {
-    redisInfoFree (&self->redisInfo);
-    mySqlInfoFree (&self->sqlInfo);
+    redisInfoFree(&self->redisInfo);
+    mySqlInfoFree(&self->sqlInfo);
 }
 
 void

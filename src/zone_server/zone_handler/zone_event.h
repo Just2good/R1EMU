@@ -27,8 +27,8 @@
 // ------ Structure declaration -------
 /** Event data needed for a commander to update position */
 typedef struct {
-    uint16_t mapId;
-    CommanderInfo info;
+    MapId_t mapId;
+    Commander commander;
     PositionXYZ newPosition;
 } GameEventUpdatePosition;
 
@@ -50,7 +50,7 @@ typedef struct {
 
 /** Event data needed for a commander to sit */
 typedef struct {
-    uint32_t pcId;
+    PcId_t pcId;
 } GameEventRestSit;
 
 /** Event data needed for a commander to jump */
@@ -65,32 +65,38 @@ typedef struct {
 } GameEventEnterPc;
 
 /** Event data needed for a commander to chat */
-typedef struct {
-    CommanderInfo info;
-    uint8_t chatText[0]; // variable length array
+#define DECLARE_GameEventChat(chatTextSize) \
+typedef struct { \
+    Commander commander; \
+    uint8_t chatText[chatTextSize]; \
 } GameEventChat;
+#define CHAT_TEXT_SIZE_MAX 500
+typedef struct {
+    Commander commander;
+    uint8_t chatText[CHAT_TEXT_SIZE_MAX];
+} _GameEventChat;
 
 /** Event data needed for a commander to rotate head */
 typedef struct {
-    uint32_t pcId;
+    PcId_t pcId;
     PositionXZ direction;
 } GameEventHeadRotate;
 
 /** Event data needed for a commander to rotate the body */
 typedef struct {
-    uint32_t pcId;
+    PcId_t pcId;
     PositionXZ direction;
 } GameEventRotate;
 
 /** Event data needed to display in-game player's disconnection  */
 typedef struct {
-    uint32_t pcId;
+    PcId_t pcId;
 } GameEventLeave;
 
 /** Event data needed for a commander to stop moving */
 typedef struct {
-    uint32_t pcId;
-    uint32_t poseId;
+    PcId_t pcId;
+    CommanderPose_t poseId;
     PositionXYZ position;
     PositionXZ direction;
 } GameEventPose;
@@ -102,7 +108,7 @@ typedef union {
     GameEventRestSit restSit;
     GameEventJump jump;
     GameEventEnterPc enterPc;
-    GameEventChat chat;
+    _GameEventChat chat;
     GameEventHeadRotate headRotate;
     GameEventRotate rotate;
     GameEventLeave leave;

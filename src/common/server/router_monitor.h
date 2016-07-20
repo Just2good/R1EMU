@@ -28,7 +28,7 @@ typedef bool (*DisconnectEventHandler) (
     zsock_t *eventServer,
     Redis *redis,
     MySQL *mysql,
-    uint16_t routerId,
+    RouterId_t routerId,
     uint8_t *sessionKeyStr
 );
 
@@ -42,7 +42,7 @@ typedef struct RouterMonitor RouterMonitor;
 
 typedef struct {
     // the Router Id
-    uint16_t routerId;
+    RouterId_t routerId;
 
     // the Router frontend socket
     zsock_t *frontend;
@@ -59,7 +59,7 @@ typedef struct {
 /**
  * @brief Allocate a new RouterMonitor structure.
  * @param info A RouterMonitorInfo initialized
- * @return A pointer to an allocated RouterMonitor, or NULL if an error occured.
+ * @return A pointer to an allocated RouterMonitor, or NULL if an error occurred.
  */
 RouterMonitor *routerMonitorNew(RouterMonitorInfo *info);
 
@@ -74,11 +74,11 @@ bool routerMonitorInit(RouterMonitor *self, RouterMonitorInfo *info);
 /**
  * @brief Allocate a new RouterMonitorInfo structure.
  * @param
- * @return A pointer to an allocated RouterMonitorInfo, or NULL if an error occured.
+ * @return A pointer to an allocated RouterMonitorInfo, or NULL if an error occurred.
  */
 RouterMonitorInfo *routerMonitorInfoNew(
     zsock_t *frontend,
-    uint16_t routerId,
+    RouterId_t routerId,
     RedisInfo *redisInfo,
     MySQLInfo *sqlInfo,
     DisconnectEventHandler disconnectHandler);
@@ -92,7 +92,7 @@ RouterMonitorInfo *routerMonitorInfoNew(
 bool routerMonitorInfoInit(
     RouterMonitorInfo *self,
     zsock_t *frontend,
-    uint16_t routerId,
+    RouterId_t routerId,
     RedisInfo *redisInfo,
     MySQLInfo *sqlInfo,
     DisconnectEventHandler disconnectHandler);

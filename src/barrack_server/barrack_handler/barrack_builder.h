@@ -36,13 +36,28 @@ typedef enum PacketTypeBarrackNormal {
 
 } PacketTypeBarrackNormal;
 
+/**
+ * BC_BARRACKNAME_CHANGE result types
+ */
+typedef enum BarrackNameChangeStatus {
+
+    BC_BARRACKNAME_CHANGE_ALREADYEXIST = -1,
+    BC_BARRACKNAME_CHANGE_OK = 0,
+    BC_BARRACKNAME_CHANGE_ERROR = 1,
+
+} BarrackNameChangeStatus;
+
+/**
+ * @brief Send message to client
+ */
+void barrackBuilderMessage(uint8_t msgType, uint8_t *message, zmsg_t *replyMsg);
 
 /**
  * @brief Send back the information of the account after a successful log in
  */
 void barrackBuilderLoginOk(
     uint64_t accountId,
-    uint8_t *accountLogin,
+    uint8_t *accountName,
     uint8_t *sessionKey,
     AccountSessionPrivileges accountPrivileges,
     zmsg_t *replyMsg
@@ -55,9 +70,9 @@ void barrackBuilderStartGameOk(
     uint32_t zoneServerId,
     uint32_t zoneServerIp,
     uint32_t zoneServerPort,
-    uint16_t mapId,
+    MapId_t mapId,
     uint8_t commanderListId,
-    uint64_t socialInfoId,
+    SocialInfoId_t socialInfoId,
     uint8_t isSingleMap,
     zmsg_t *replyMsg
 );
@@ -86,18 +101,23 @@ void barrackBuilderServerEntry(
 /**
  * @brief Build the list of commanders in the barrack
  */
-void barrackBuilderCommanderList(uint64_t accountId, zmsg_t *replyMsg);
+void barrackBuilderCommanderList(
+    uint64_t accountId,
+    GameSession *gameSession,
+    Commander **commanders,
+    int commandersCount,
+    zmsg_t *replyMsg);
 
 /**
  * @brief Build the list of zone servers
  */
-void barrackBuilderZoneTraffics(uint16_t mapId, zmsg_t *replyMsg);
+void barrackBuilderZoneTraffics(MapId_t mapId, zmsg_t *replyMsg);
 
 /**
  * @brief Change the name of the barrack
  */
 void
-barrackBuilderBarrackNameChange(uint8_t *barrackName, zmsg_t *replyMsg);
+barrackBuilderBarrackNameChange(BarrackNameChangeStatus resultType, uint8_t *barrackName, zmsg_t *replyMsg);
 
 /**
  * @brief Destroy commanders
@@ -108,8 +128,7 @@ barrackBuilderCommanderDestroy(uint8_t commanderDestroyMask, zmsg_t *replyMsg);
 /**
  * @brief Create a new commander
  */
-void
-barrackBuilderCommanderCreate(CommanderCreateInfo *commander, zmsg_t *replyMsg);
+void barrackBuilderCommanderCreate(Commander *commander, uint8_t commandersCount, zmsg_t *replyMsg);
 
 /**
  * @brief Send information about the pets of the account
@@ -125,3 +144,8 @@ void barrackBuilderIesModifyList(zmsg_t *replyMsg);
  * @brief @unknown ; Makes the character selection appear directly without asking for the family name
  */
 void barrackBuilderNormalUnk1(uint64_t accountId, zmsg_t *replyMsg);
+
+/**
+ * @brief Logout
+ */
+void barrackBuilderLogoutOk(zmsg_t *replyMsg);
